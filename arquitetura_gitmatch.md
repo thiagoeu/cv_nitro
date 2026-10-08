@@ -38,3 +38,9 @@ O sistema usará um **Fluxo Cíclico com Validação Estruturada**. Isso garante
 Para lidar com usuários que têm muitos projetos, o fluxo será inteligente:
 * O sistema fará um primeiro filtro baseado nos metadados (linguagem principal e descrição curta).
 * Em seguida, apenas os `README.md` dos projetos mais promissores serão baixados na íntegra para serem enviados ao Gemini. (Embora o Gemini 1.5 Pro tenha contexto de sobra, isso reduzirá o tempo de execução e espera).
+
+## 5. Histórico e Gerenciamento (Dashboard)
+* **Armazenamento Local:** O sistema salvará os currículos gerados localmente (em formato Markdown em uma pasta específica ou num banco SQLite simples).
+* **Área de Acompanhamento (UI):** A aplicação Streamlit terá uma barra lateral (Sidebar) ou aba dedicada chamada "Histórico", onde o usuário poderá:
+  - Ver a lista de currículos já gerados (com data e título da vaga).
+  - Clicar em um currículo anterior para visualizá-lo e copiá-lo novamente.
