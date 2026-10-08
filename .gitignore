@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Ambientes Virtuais
+venv/
+env/
+.env
+.venv/
+env.bak/
+venv.bak/
+
+# Streamlit
+.streamlit/
+
+# OpenSpec / Antigravity (opcional, dependendo de como você quer fazer o controle de versão)
+# Geralmente não ignoramos .agents ou openspec para compartilhar o histórico com a equipe.
