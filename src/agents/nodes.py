@@ -1,28 +1,33 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from src.core import config
+import requests
+import base64
+from langchain_core.messages import HumanMessage, SystemMessage
 
 class JobAnalysis(BaseModel):
     keywords: List[str] = Field(description="Principais palavras-chave, soft-skills e conceitos importantes da vaga.")
     technologies: List[str] = Field(description="Ferramentas, linguagens e frameworks técnicos exigidos ou desejados.")
+    language: str = Field(default="pt", description="Idioma detectado da vaga, ex: 'en' para inglês, 'pt' para português, 'es' para espanhol.")
 
 def job_analyzer(state: dict) -> dict:
     """
-    Analisa a descrição da vaga e extrai palavras-chave e tecnologias.
+    Analisa a descrição da vaga e extrai palavras-chave, tecnologias e o idioma predominante.
     """
     job_description = state.get("job_description", "")
     
     if not job_description:
-        return {"job_keywords": [], "job_technologies": []}
+        return {"job_keywords": [], "job_technologies": [], "job_language": "pt"}
     
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
     structured_llm = llm.with_structured_output(JobAnalysis)
     
     prompt = PromptTemplate.from_template(
         "Você é um recrutador especialista. Analise a seguinte vaga de emprego "
-        "e extraia as principais tecnologias e palavras-chave comportamentais/conceituais.\n\n"
+        "e extraia as principais tecnologias, palavras-chave comportamentais/conceituais "
+        "e identifique o idioma principal da vaga ('en' para inglês, 'pt' para português, etc.).\n\n"
         "Vaga:\n{job_description}"
     )
     
@@ -30,16 +35,22 @@ def job_analyzer(state: dict) -> dict:
     
     try:
         result = chain.invoke({"job_description": job_description})
+        detected_lang = (result.language or "pt").lower().strip()
+        if "en" in detected_lang:
+            lang_code = "en"
+        elif "es" in detected_lang:
+            lang_code = "es"
+        else:
+            lang_code = "pt"
+
         return {
             "job_keywords": result.keywords,
-            "job_technologies": result.technologies
+            "job_technologies": result.technologies,
+            "job_language": lang_code
         }
     except Exception as e:
         print(f"Erro no Job Analyzer: {e}")
-        return {"job_keywords": [], "job_technologies": []}
-
-import requests
-import base64
+        return {"job_keywords": [], "job_technologies": [], "job_language": "pt"}
 
 def github_researcher(state: dict) -> dict:
     """
@@ -73,7 +84,6 @@ def github_researcher(state: dict) -> dict:
         for repo in repos:
             repo_lang = (repo.get("language") or "").lower()
             
-            # Se a linguagem do repo estiver nas tecnologias da vaga, ou se a vaga não especificar tecnologia
             if not technologies or repo_lang in technologies or any(t in str(repo.get("description", "")).lower() for t in technologies):
                 selected_repos.append({
                     "name": repo["name"],
@@ -83,11 +93,9 @@ def github_researcher(state: dict) -> dict:
                     "default_branch": repo["default_branch"]
                 })
                 
-                # Limitamos a 3 repositórios para não sobrecarregar o prompt e as requisições
                 if len(selected_repos) >= 3:
                     break
                     
-        # Para os repositórios selecionados, tenta baixar o README
         for repo in selected_repos:
             readme_url = f"https://api.github.com/repos/{username}/{repo['name']}/readme"
             try:
@@ -108,20 +116,19 @@ def github_researcher(state: dict) -> dict:
         print(f"Erro no GitHub Researcher: {e}")
         return {"github_repos": [], "github_readmes": {}}
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 def resume_generator(state: dict) -> dict:
     """
-    Gera um novo currículo em Markdown, mesclando o currículo original,
-    os requisitos da vaga e as evidências do GitHub.
+    Gera um novo currículo em Markdown com formatação de alta fidelidade e aderência ATS,
+    seguindo o padrão estrutural canônico com tabela de habilidades e bullets de impacto.
     """
     base_resume = state.get("base_resume_md", "")
     job_desc = state.get("job_description", "")
     github_repos = state.get("github_repos", [])
     readmes = state.get("github_readmes", {})
     feedback = state.get("reviewer_feedback", "")
+    job_language = state.get("job_language", "pt")
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.3)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.2)
     
     portfolio_context = ""
     for repo in github_repos:
@@ -129,28 +136,87 @@ def resume_generator(state: dict) -> dict:
         desc = repo.get("description", "")
         lang = repo.get("language", "")
         readme = readmes.get(name, "")
-        portfolio_context += f"\\n### Repositório: {name}\\nLinguagem: {lang}\\nDescrição: {desc}\\nREADME:\\n{readme[:1000]}\\n"
+        portfolio_context += f"\n### Repositório: {name}\nLinguagem: {lang}\nDescrição: {desc}\nREADME:\n{readme[:1000]}\n"
         
-    system_prompt = (
-        "Você é um especialista em recrutamento de tecnologia e sistemas ATS (Applicant Tracking Systems). "
-        "Sua tarefa é REESCREVER COMPLETAMENTE e OTIMIZAR o currículo base do candidato em formato Markdown "
-        "para garantir que ele passe nos filtros de ATS e impressione os recrutadores para a vaga fornecida.\\n\\n"
-        "Regras estritas de Otimização:\\n"
-        "1. **Adequação ATS**: Use as MESMAS palavras-chave e jargões encontrados na vaga. Integre essas palavras de forma natural no Resumo Profissional e nas Experiências.\\n"
-        "2. **Estrutura Limpa**: Use seções com títulos padrões e reconhecíveis por ATS (ex: 'Resumo Profissional', 'Experiência Profissional', 'Educação', 'Habilidades Técnicas', 'Projetos em Destaque').\\n"
-        "3. **Impacto e Ação**: Reescreva os bullet points das experiências usando verbos de ação fortes (ex: Desenvolveu, Otimizou, Liderou) e inclua resultados quantificáveis quando possível, focado no que a vaga pede.\\n"
-        "4. **Projetos em Destaque**: Adicione ou melhore uma seção 'Projetos em Destaque' usando os repositórios do GitHub fornecidos, provando na prática o conhecimento nas tecnologias exigidas.\\n"
-        "5. **NÃO ALUCINE**: NUNCA invente empregos, cargos, ferramentas, habilidades ou métricas que o candidato não possui no currículo original ou no portfólio GitHub.\\n"
-        "- Retorne APENAS o currículo em Markdown válido.\\n"
-    )
+    is_english = (job_language == "en")
+    lang_directive = "em INGLÊS (English)" if is_english else "em PORTUGUÊS"
     
+    # Rótulos canônicos de seções conforme o idioma
+    sec_summary = "PROFESSIONAL SUMMARY" if is_english else "RESUMO PROFISSIONAL"
+    sec_skills = "TECHNICAL SKILLS" if is_english else "HABILIDADES TÉCNICAS"
+    sec_experience = "WORK EXPERIENCE" if is_english else "EXPERIÊNCIA PROFISSIONAL"
+    sec_projects = "KEY PROJECTS" if is_english else "PROJETOS EM DESTAQUE"
+    sec_education = "EDUCATION" if is_english else "FORMAÇÃO ACADÊMICA"
+    sec_certifications = "CERTIFICATIONS" if is_english else "CURSOS E CERTIFICAÇÕES"
+    sec_languages = "LANGUAGES" if is_english else "IDIOMAS"
+
+    system_prompt = f"""Você é um especialista em recrutamento executivo de tecnologia e sistemas ATS.
+Sua missão é reescrever o currículo base em Markdown de ALTA FIDELIDADE e PADRONIZAÇÃO EXECUTIVA {lang_directive}.
+
+ESTRUTURA OBRIGATÓRIA DO CURRÍCULO (Siga RIGOROSAMENTE este modelo):
+
+# [Nome Completo do Candidato]
+### [Cargo Alvo / Especialidade Relevante para a Vaga]
+[Cidade, UF / País] | [Email] | [LinkedIn] | [GitHub]
+
+## {sec_summary}
+[Um único parágrafo denso e de alto impacto destacando senioridade, stack tecnológica principal alinhada à vaga, experiências em projetos de larga escala/escalabilidade, Clean Architecture/SOLID e diferenciais técnicos reais].
+
+## {sec_skills}
+| Categoria | Tecnologias & Conceitos |
+| :--- | :--- |
+| **Back-end & Arquitetura:** | [Node.js, NestJS, TypeScript, Python, RESTful APIs, Microsserviços, Clean Architecture, SOLID, Design Patterns...] |
+| **Front-end & Mobile:** | [React, Next.js, React Native, TypeScript, Tailwind CSS, UI/UX Responsivo...] |
+| **IA, RAG & Agentes:** | [RAG, Embeddings, Vector Stores, LLMs Locais, Tool Calling, LangGraph...] |
+| **Mensageria & Filas:** | [RabbitMQ, Filas, Comunicação Assíncrona...] |
+| **Banco de Dados & ORM:** | [PostgreSQL, MongoDB, Prisma, TypeORM...] |
+| **DevOps & Ferramentas:** | [Docker, Git, GitHub Actions (CI/CD), Linux, Jira / Scrum...] |
+
+*(Adapte as categorias se houver especialidades relevantes, mas mantenha a tabela de 2 colunas).*
+
+## {sec_experience}
+Para CADA experiência relevante:
+### [Empresa / Órgão — Nome do Projeto]
+*[Cargo] | [Período, ex: Mês Ano – Presente] | [Localidade (Remoto ou Presencial)]*
+- ● **[Impacto / Dimensão]:** [Verbo de ação forte + escopo + resultado mensurável ou de escala]
+- ● **[Back-end & Arquitetura]:** [Tecnologias e padrões técnicos aplicados]
+- ● **[Front-end & UX]:** [Interface e usabilidade se aplicável]
+- ● **[Persistência & Integração]:** [Bancos de dados, APIs ou documentação técnica padronizada]
+- ● **[Processos Ágeis & Qualidade]:** [Scrum, Code Review, CI/CD]
+
+## {sec_projects}
+Para CADA projeto destacado (enriqueça com os repositórios do GitHub fornecidos):
+### [Nome do Projeto] — [Subtítulo / Proposta de Valor]
+*[Stack tecnológica separada por vírgulas]*
+- ● **[Pilar Arquitetural 1]:** [Explicação técnica profunda de implementação e features]
+- ● **[Pilar Arquitetural 2]:** [Segundo diferencial técnico comprovado]
+- ● **[Repositório GitHub]:** [Link direto, ex: https://github.com/usuario/repo]
+
+## {sec_education}
+### [Grau e Curso]
+*[Instituição de Ensino] | [Ano de Conclusão / Previsão]*
+[Ênfase ou destaques acadêmicos relevantes se houver]
+
+## {sec_certifications}
+- ● **[Nome do Curso/Certificação]:** [Instituição] ([Ano]) | [Código/Link se houver]
+
+## {sec_languages}
+[Idioma 1]: Nativo | [Idioma 2]: Fluente / Avançado | [Idioma 3]: Intermediário
+
+REGRAS CRÍTICAS:
+1. Formato dos Bullets: NUNCA use marcadores simples sem negrito. SEMPRE use `- ● **[Tópico de Impacto]:** [Ação...]`.
+2. Tabela de Habilidades: SEMPRE formate a seção de habilidades como a tabela Markdown acima com as categorias alinhadas à esquerda.
+3. Alinhamento ATS: Integre naturalmente as palavras-chave exigidas pela vaga nas descrições de cargo e habilidades.
+4. NUNCA ALUCINE: Não invente empregos, empresas ou repositórios que o candidato não possui.
+5. Retorne APENAS o Markdown limpo e completo."""
+
     if feedback:
-        system_prompt += f"\\n\\nATENÇÃO! O revisor rejeitou a versão anterior pelo seguinte motivo: {feedback}. Corrija o currículo focando nisso."
+        system_prompt += f"\n\nATENÇÃO! O revisor rejeitou a versão anterior pelo seguinte motivo: {feedback}. Ajuste o currículo rigorosamente conforme esse feedback."
         
     user_prompt = (
-        f"--- VAGA ---\\n{job_desc}\\n\\n"
-        f"--- CURRÍCULO BASE ---\\n{base_resume}\\n\\n"
-        f"--- PORTFÓLIO GITHUB ---\\n{portfolio_context}"
+        f"--- VAGA ---\n{job_desc}\n\n"
+        f"--- CURRÍCULO BASE ---\n{base_resume}\n\n"
+        f"--- PORTFÓLIO GITHUB ---\n{portfolio_context}"
     )
     
     try:
@@ -164,13 +230,13 @@ def resume_generator(state: dict) -> dict:
         return {"generated_resume_md": base_resume}
 
 class ReviewResult(BaseModel):
-    approved: bool = Field(description="True se o currículo NÃO tiver alucinações e estiver bom, False caso contrário.")
-    feedback: str = Field(description="Feedback caso reprovado, explicando o que deve ser removido ou alterado.")
+    approved: bool = Field(description="True se o currículo NÃO tiver alucinações e seguir o padrão estrutural, False caso contrário.")
+    feedback: str = Field(description="Feedback caso reprovado, explicando o que deve ser corrigido.")
 
 def quality_reviewer(state: dict) -> dict:
     """
-    Revisa o currículo gerado para garantir que não contém ferramentas ou
-    projetos inventados que não existiam no currículo base ou nos READMEs.
+    Revisa o currículo gerado para garantir conformidade estrutural, padrão dos bullets
+    e ausência de informações técnicas ou cargos inventados.
     """
     generated = state.get("generated_resume_md", "")
     base_resume = state.get("base_resume_md", "")
@@ -178,7 +244,6 @@ def quality_reviewer(state: dict) -> dict:
     readmes = state.get("github_readmes", {})
     attempts = state.get("review_attempts", 0)
     
-    # Se já tentou muitas vezes, aprova o que tem para não ficar em loop
     if attempts >= 2:
         return {"reviewer_approved": True, "reviewer_feedback": "Aprovado por limite de tentativas", "review_attempts": attempts + 1}
         
@@ -186,20 +251,20 @@ def quality_reviewer(state: dict) -> dict:
     for repo in github_repos:
         name = repo["name"]
         readme = readmes.get(name, "")
-        portfolio_context += f"\\n### Repositório: {name}\\nREADME:\\n{readme[:500]}\\n"
+        portfolio_context += f"\n### Repositório: {name}\nREADME:\n{readme[:500]}\n"
         
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
     structured_llm = llm.with_structured_output(ReviewResult)
     
     prompt = PromptTemplate.from_template(
-        "Você é um auditor rigoroso de currículos. O candidato gerou uma nova versão do currículo, "
-        "mas você deve verificar se ele inventou alguma ferramenta técnica ou projeto nos 'Projetos em Destaque' "
-        "que NÃO consta no currículo base e NÃO consta nos READMEs fornecidos.\\n\\n"
-        "--- CURRÍCULO BASE ---\\n{base_resume}\\n\\n"
-        "--- READMEs FORNECIDOS ---\\n{portfolio_context}\\n\\n"
-        "--- CURRÍCULO GERADO (Para revisão) ---\\n{generated}\\n\\n"
-        "Avalie o currículo gerado. Há alucinações claras? Retorne aprovado (True) se estiver tudo limpo, "
-        "ou (False) se houver problemas, detalhando no feedback."
+        "Você é um auditor rigoroso de currículos técnicos de alto padrão.\n"
+        "Avalie o currículo gerado segundo dois critérios:\n"
+        "1. **Alucinações:** O candidato inventou tecnologias ou ferramentas nos projetos que NÃO constam no currículo base nem nos READMEs?\n"
+        "2. **Conformidade de Layout:** O currículo possui a tabela de 'HABILIDADES TÉCNICAS' e os bullet points no padrão '● **Tópico:** Ação...'?\n\n"
+        "--- CURRÍCULO BASE ---\n{base_resume}\n\n"
+        "--- READMEs FORNECIDOS ---\n{portfolio_context}\n\n"
+        "--- CURRÍCULO GERADO (Para revisão) ---\n{generated}\n\n"
+        "Retorne aprovado (True) se estiver tudo limpo e bem formatado, ou (False) se houver problemas, explicando no feedback."
     )
     
     chain = prompt | structured_llm
@@ -217,6 +282,59 @@ def quality_reviewer(state: dict) -> dict:
         }
     except Exception as e:
         print(f"Erro no Quality Reviewer: {e}")
-        # Em caso de falha de API, aprova por padrão para não quebrar o fluxo
         return {"reviewer_approved": True, "reviewer_feedback": f"Erro de API: {e}", "review_attempts": attempts + 1}
 
+def cover_letter_generator(state: dict) -> dict:
+    """
+    Gera uma Cover Letter (Carta de Apresentação) personalizada, convincente e alinhada
+    com a vaga e o portfólio GitHub, escrita no mesmo idioma da vaga.
+    """
+    job_desc = state.get("job_description", "")
+    generated_resume = state.get("generated_resume_md", "")
+    github_repos = state.get("github_repos", [])
+    job_language = state.get("job_language", "pt")
+    
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.3)
+    
+    repos_summary = ", ".join([r.get("name", "") for r in github_repos if r.get("name")])
+    
+    lang_directive = "em PORTUGUÊS"
+    if job_language == "en":
+        lang_directive = "em INGLÊS (English)"
+    elif job_language == "es":
+        lang_directive = "em ESPANHOL (Español)"
+        
+    system_prompt = (
+        "Você é um especialista sênior em redação de cartas de apresentação (Cover Letters) e aconselhamento de carreira.\n"
+        f"Escreva uma Cover Letter profissional, elegante e persuasiva {lang_directive} adaptada para a vaga descrita.\n\n"
+        "Diretrizes:\n"
+        "1. **Abertura**: Saudação formal ao time de recrutamento/gerente de contratação e apresentação com entusiasmo pela vaga.\n"
+        "2. **Conexão Técnica & Experiência**: Destaque as principais realizações do candidato pertinentes à vaga, citando experiência prática e projetos reais.\n"
+        "3. **Fit Cultural & Valor**: Mostre compreensão dos objetivos da empresa e como o candidato resolverá os desafios propostos.\n"
+        "4. **Fechamento**: Conclusão cordial solicitando uma entrevista/conversa técnica.\n"
+        "5. **Alinhamento Rigoroso**: NÃO invente informações que não estejam presentes no currículo do candidato.\n"
+        "- Retorne APENAS o texto da carta de apresentação formatado em Markdown limpo."
+    )
+    
+    user_prompt = (
+        f"--- VAGA ---\n{job_desc}\n\n"
+        f"--- CURRÍCULO DO CANDIDATO ---\n{generated_resume}\n\n"
+        f"--- PROJETOS DESTACADOS GITHUB ---\n{repos_summary}"
+    )
+    
+    try:
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        return {"generated_cover_letter_md": response.content}
+    except Exception as e:
+        print(f"Erro no Cover Letter Generator: {e}")
+        fallback_letter = (
+            "Dear Hiring Team,\n\nI am writing to express my enthusiasm for this position. "
+            "Please review my attached resume and GitHub projects.\n\nBest regards."
+            if job_language == "en" else
+            "Prezado time de recrutamento,\n\nEscrevo para manifestar meu grande interesse nesta oportunidade. "
+            "Por favor, confira meu currículo anexado e projetos no GitHub.\n\nAtenciosamente."
+        )
+        return {"generated_cover_letter_md": fallback_letter}

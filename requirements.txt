@@ -1,6 +1,10 @@
 langgraph
 langchain
+langchain-google-genai
 streamlit
 google-generativeai
 requests
 python-dotenv
+pypdf
+python-docx
+tabulate

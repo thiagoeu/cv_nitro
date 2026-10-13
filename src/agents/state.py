@@ -5,10 +5,12 @@ class GraphState(TypedDict):
     job_description: str
     base_resume_md: str
     github_username: str
+    job_url: Optional[str]
     
     # Processado pelo Job Analyzer
     job_keywords: List[str]
     job_technologies: List[str]
+    job_language: Optional[str]  # ex: 'en', 'pt', 'es'
     
     # Processado pelo GitHub Researcher
     github_repos: List[Dict[str, Any]]
@@ -16,6 +18,9 @@ class GraphState(TypedDict):
     
     # Processado pelo Resume Generator
     generated_resume_md: Optional[str]
+    
+    # Processado pelo Cover Letter Generator
+    generated_cover_letter_md: Optional[str]
     
     # Processado pelo Quality Reviewer
     reviewer_feedback: Optional[str]

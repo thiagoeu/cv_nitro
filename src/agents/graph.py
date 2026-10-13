@@ -1,13 +1,19 @@
 from langgraph.graph import StateGraph, END
 from src.agents.state import GraphState
-from src.agents.nodes import job_analyzer, github_researcher, resume_generator, quality_reviewer
+from src.agents.nodes import (
+    job_analyzer,
+    github_researcher,
+    resume_generator,
+    quality_reviewer,
+    cover_letter_generator
+)
 
 def route_after_review(state: dict) -> str:
     """
-    Decide se o fluxo acaba ou volta pro gerador.
+    Decide se o fluxo gera a Cover Letter após aprovação ou volta para o gerador de currículo.
     """
     if state.get("reviewer_approved", False):
-        return END
+        return "cover_letter_generator"
     else:
         return "resume_generator"
 
@@ -20,6 +26,7 @@ def build_graph():
     workflow.add_node("github_researcher", github_researcher)
     workflow.add_node("resume_generator", resume_generator)
     workflow.add_node("quality_reviewer", quality_reviewer)
+    workflow.add_node("cover_letter_generator", cover_letter_generator)
     
     # Define o ponto de entrada
     workflow.set_entry_point("job_analyzer")
@@ -34,10 +41,13 @@ def build_graph():
         "quality_reviewer",
         route_after_review,
         {
-            END: END,
+            "cover_letter_generator": "cover_letter_generator",
             "resume_generator": "resume_generator"
         }
     )
+    
+    # A Cover Letter finaliza o fluxo
+    workflow.add_edge("cover_letter_generator", END)
     
     # Compila o grafo
     return workflow.compile()
@@ -46,27 +56,3 @@ if __name__ == "__main__":
     print("Construindo grafo...")
     app = build_graph()
     print("Grafo construído com sucesso.")
-    
-    # Teste Dry-Run
-    print("Iniciando dry-run end-to-end...")
-    initial_state = GraphState(
-        job_description="Dev",
-        base_resume_md="Teste",
-        github_username="octocat",
-        job_keywords=[],
-        job_technologies=[],
-        github_repos=[],
-        github_readmes={},
-        generated_resume_md=None,
-        reviewer_feedback=None,
-        reviewer_approved=False,
-        review_attempts=0
-    )
-    
-    # Rodamos mas ignorando se der erro por falta de chave de API, pois só queremos validar o grafo compilando
-    try:
-        final_state = app.invoke(initial_state)
-        print("Dry-run concluído.")
-        print(f"Aprovado final: {final_state.get('reviewer_approved')}")
-    except Exception as e:
-        print(f"Erro durante a execução (provável falta de API_KEY válida): {e}")
