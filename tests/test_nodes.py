@@ -166,7 +166,12 @@ def test_cover_letter_generator_structure():
         review_attempts=1
     )
     
-    result = cover_letter_generator(state)
-    assert "generated_cover_letter_md" in result
-    assert result["generated_cover_letter_md"] is not None
-    assert len(result["generated_cover_letter_md"]) > 0
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+        mock_instance = MagicMock()
+        mock_instance.invoke.return_value = MagicMock(content="Dear Hiring Manager,\nMock letter.")
+        mock_llm_cls.return_value = mock_instance
+        
+        result = cover_letter_generator(state)
+        assert "generated_cover_letter_md" in result
+        assert result["generated_cover_letter_md"] is not None
+        assert "Dear Hiring Manager" in result["generated_cover_letter_md"]

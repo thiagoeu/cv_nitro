@@ -41,7 +41,7 @@ def render_sidebar():
         lang = (resume.get('language') or 'pt').upper()
         
         btn_label = f"[{lang}] {job_title} ({date_str})"
-        if st.sidebar.button(btn_label, key=f"sidebar_hist_{idx}", use_container_width=True):
+        if st.sidebar.button(btn_label, key=f"sidebar_hist_{idx}", width="stretch"):
             st.session_state.viewing_history = resume['filepath']
             st.rerun()
 
@@ -62,7 +62,7 @@ def render_application_view(filepath: str):
     
     col_back, col_title = st.columns([1, 6])
     with col_back:
-        if st.button("← Voltar ao Início", use_container_width=True):
+        if st.button("← Voltar ao Início", width="stretch"):
             del st.session_state.viewing_history
             st.rerun()
             
@@ -105,7 +105,7 @@ def render_application_view(filepath: str):
                 data=formatted_html,
                 file_name=f"Curriculo_{job_title.replace(' ', '_')}.html",
                 mime="text/html",
-                use_container_width=True
+                width="stretch"
             )
         st.components.v1.html(formatted_html, height=1000, scrolling=True)
         
@@ -206,7 +206,7 @@ def render_dashboard(resumes: list):
                 display_text="Acessar Vaga 🔗"
             )
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
     
@@ -215,7 +215,7 @@ def render_dashboard(resumes: list):
     for i, r in enumerate(resumes[:4]):
         col_btn = cols_buttons[i % 4]
         job_t = r.get("job_title", "Vaga")
-        if col_btn.button(f"Abrir: {job_t[:20]}...", key=f"dash_btn_{i}", use_container_width=True):
+        if col_btn.button(f"Abrir: {job_t[:20]}...", key=f"dash_btn_{i}", width="stretch"):
             st.session_state.viewing_history = r["filepath"]
             st.rerun()
 
@@ -257,7 +257,7 @@ def render_new_optimization():
     github_user = st.text_input("Usuário do GitHub (opcional para cruzar projetos)", placeholder="Ex: octocat")
     job_desc = st.text_area("Descrição Completa da Vaga *", height=200, placeholder="Cole a descrição da vaga aqui (em português ou inglês)...")
     
-    submit = st.button("Gerar Currículo & Cover Letter 🚀", type="primary", use_container_width=True)
+    submit = st.button("Gerar Currículo & Cover Letter 🚀", type="primary", width="stretch")
     
     if submit:
         if not job_title or not job_desc or not base_resume:
@@ -321,7 +321,7 @@ def render_new_optimization():
                             data=formatted_html,
                             file_name=f"Curriculo_{job_title.replace(' ', '_')}.html",
                             mime="text/html",
-                            use_container_width=True
+                            width="stretch"
                         )
                     st.components.v1.html(formatted_html, height=1000, scrolling=True)
 

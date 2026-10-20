@@ -22,19 +22,18 @@ def job_analyzer(state: dict) -> dict:
     if not job_description:
         return {"job_keywords": [], "job_technologies": [], "job_language": "pt"}
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
-    structured_llm = llm.with_structured_output(JobAnalysis)
-    
-    prompt = PromptTemplate.from_template(
-        "Você é um recrutador especialista. Analise a seguinte vaga de emprego "
-        "e extraia as principais tecnologias, palavras-chave comportamentais/conceituais "
-        "e identifique o idioma principal da vaga ('en' para inglês, 'pt' para português, etc.).\n\n"
-        "Vaga:\n{job_description}"
-    )
-    
-    chain = prompt | structured_llm
-    
     try:
+        llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0)
+        structured_llm = llm.with_structured_output(JobAnalysis)
+        
+        prompt = PromptTemplate.from_template(
+            "Você é um recrutador especialista. Analise a seguinte vaga de emprego "
+            "e extraia as principais tecnologias, palavras-chave comportamentais/conceituais "
+            "e identifique o idioma principal da vaga ('en' para inglês, 'pt' para português, etc.).\n\n"
+            "Vaga:\n{job_description}"
+        )
+        
+        chain = prompt | structured_llm
         result = chain.invoke({"job_description": job_description})
         detected_lang = (result.language or "pt").lower().strip()
         if "en" in detected_lang:
@@ -140,7 +139,7 @@ def resume_generator(state: dict) -> dict:
     feedback = state.get("reviewer_feedback", "")
     job_language = state.get("job_language", "pt")
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.2)
+    llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.2)
     
     portfolio_context = ""
     for repo in github_repos:
@@ -270,7 +269,7 @@ def quality_reviewer(state: dict) -> dict:
         portfolio_context += f"\n### Repositório: {name}\nREADME:\n{readme[:500]}\n"
         
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+        llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0)
         structured_llm = llm.with_structured_output(ReviewResult)
         
         prompt = PromptTemplate.from_template(
@@ -313,8 +312,6 @@ def cover_letter_generator(state: dict) -> dict:
     github_repos = state.get("github_repos", [])
     job_language = state.get("job_language", "pt")
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.3)
-    
     repos_summary = ", ".join([r.get("name", "") for r in github_repos if r.get("name")])
     
     lang_directive = "em PORTUGUÊS"
@@ -342,6 +339,7 @@ def cover_letter_generator(state: dict) -> dict:
     )
     
     try:
+        llm = ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=0.3)
         response = llm.invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
