@@ -60,11 +60,97 @@ def render_application_view(filepath: str):
     lang = (metadata.get("language") or "pt").upper()
     date_str = str(metadata.get("date", ""))[:19].replace("T", " ")
     
-    col_back, col_title = st.columns([1, 6])
+    col_back, col_rerun, col_spacer = st.columns([1.5, 2.5, 3.5])
     with col_back:
         if st.button("← Voltar ao Início", width="stretch"):
             del st.session_state.viewing_history
             st.rerun()
+    with col_rerun:
+        is_rerun_open = st.session_state.get(f"show_rerun_{filepath}", False)
+        btn_label = "✖️ Fechar Re-otimização" if is_rerun_open else "🔄 Re-otimizar com IA"
+        if st.button(btn_label, type="primary" if not is_rerun_open else "secondary", width="stretch"):
+            st.session_state[f"show_rerun_{filepath}"] = not is_rerun_open
+            st.rerun()
+            
+    # Painel interativo de Re-otimização
+    if st.session_state.get(f"show_rerun_{filepath}", False):
+        with st.expander("⚡ Re-otimizar Candidatura com o Novo Modelo de IA", expanded=True):
+            st.info("Execute novamente o pipeline multi-agente para esta vaga utilizando o modelo atualizado de IA.")
+            col_r1, col_r2 = st.columns([2, 1])
+            with col_r1:
+                r_title = st.text_input("Título da Vaga *", value=job_title, key=f"r_title_{filepath}")
+            with col_r2:
+                r_url = st.text_input("Link da Vaga (opcional)", value=job_url, key=f"r_url_{filepath}")
+                
+            r_github = st.text_input("Usuário do GitHub (opcional)", value=metadata.get("github_username", ""), key=f"r_gh_{filepath}")
+            
+            saved_desc = metadata.get("job_description", "")
+            r_desc = st.text_area(
+                "Descrição Completa da Vaga *",
+                value=saved_desc,
+                height=160,
+                placeholder="Cole a descrição da vaga aqui para a IA analisar...",
+                key=f"r_desc_{filepath}"
+            )
+            
+            default_base = metadata.get("base_resume") or app_data.get("resume_md", "")
+            r_base = st.text_area(
+                "Currículo Base do Candidato *",
+                value=default_base,
+                height=180,
+                key=f"r_base_{filepath}"
+            )
+            
+            if st.button("🚀 Iniciar Re-otimização Agora", type="primary", width="stretch", key=f"r_submit_{filepath}"):
+                if not r_title or not r_desc or not r_base:
+                    st.error("Preencha o título da vaga, descrição e currículo base!")
+                else:
+                    initial_state = GraphState(
+                        job_description=r_desc,
+                        base_resume_md=r_base,
+                        github_username=r_github,
+                        job_url=r_url,
+                        job_keywords=[],
+                        job_technologies=[],
+                        job_language="pt",
+                        github_repos=[],
+                        github_readmes={},
+                        generated_resume_md=None,
+                        generated_cover_letter_md=None,
+                        reviewer_feedback=None,
+                        reviewer_approved=False,
+                        review_attempts=0
+                    )
+                    with st.status("Re-executando fluxo multi-agente...", expanded=True) as status:
+                        st.write("🔍 Analisando vaga e portfólio com o modelo de IA...")
+                        try:
+                            final_state = graph.invoke(initial_state)
+                            status.update(label="Re-otimização concluída com sucesso!", state="complete", expanded=False)
+                            
+                            new_resume_md = final_state.get("generated_resume_md", "")
+                            new_cover_md = final_state.get("generated_cover_letter_md", "")
+                            new_lang = final_state.get("job_language", "pt")
+                            new_techs = final_state.get("job_technologies", [])
+                            
+                            # Atualiza o arquivo existente com a nova versão gerada
+                            history_manager.save_resume(
+                                job_title=r_title,
+                                content=new_resume_md,
+                                job_url=r_url,
+                                cover_letter=new_cover_md,
+                                language=new_lang,
+                                technologies=new_techs,
+                                job_description=r_desc,
+                                base_resume=r_base,
+                                github_username=r_github,
+                                filepath=filepath
+                            )
+                            st.session_state[f"show_rerun_{filepath}"] = False
+                            st.success("Currículo e Cover Letter re-otimizados e salvos com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            status.update(label="Falha na re-otimização", state="error", expanded=True)
+                            st.error(f"Erro durante a execução: {e}")
             
     st.subheader(f"💼 {job_title}")
     
@@ -299,7 +385,10 @@ def render_new_optimization():
                     job_url=job_url,
                     cover_letter=generated_cover,
                     language=job_lang,
-                    technologies=job_techs
+                    technologies=job_techs,
+                    job_description=job_desc,
+                    base_resume=base_resume,
+                    github_username=github_user
                 )
                 
                 st.success(f"Currículo e Cover Letter gerados no idioma: **{job_lang.upper()}**!")

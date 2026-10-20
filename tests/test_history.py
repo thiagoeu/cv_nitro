@@ -37,5 +37,34 @@ def test_history_manager():
     
     print("All history tests passed!")
 
-if __name__ == "__main__":
-    test_history_manager()
+def test_history_manager_update_and_rerun_fields():
+    filepath = history_manager.save_resume(
+        job_title="Full Stack Engineer",
+        content="# Initial Resume",
+        job_url="https://example.com/job/1",
+        cover_letter="Cover Letter",
+        language="pt",
+        technologies=["Python", "React"],
+        job_description="Job description details...",
+        base_resume="# Base Resume Text",
+        github_username="thiagoeu"
+    )
+    
+    app_data = history_manager.load_application(filepath)
+    assert app_data["metadata"]["job_description"] == "Job description details..."
+    assert app_data["metadata"]["base_resume"] == "# Base Resume Text"
+    assert app_data["metadata"]["github_username"] == "thiagoeu"
+    
+    # Atualiza no mesmo caminho de arquivo (re-execução/rerun)
+    updated_filepath = history_manager.save_resume(
+        job_title="Full Stack Engineer",
+        content="# Updated Optimized Resume",
+        job_url="https://example.com/job/1",
+        cover_letter="Updated Letter",
+        filepath=filepath
+    )
+    assert updated_filepath == filepath
+    updated_app = history_manager.load_application(filepath)
+    assert updated_app["resume_md"] == "# Updated Optimized Resume"
+    assert updated_app["cover_letter_md"] == "Updated Letter"
+

@@ -21,18 +21,24 @@ def save_resume(
     job_url: str = "",
     cover_letter: str = "",
     language: str = "pt",
-    technologies: Optional[List[str]] = None
+    technologies: Optional[List[str]] = None,
+    job_description: str = "",
+    base_resume: str = "",
+    github_username: str = "",
+    filepath: Optional[str] = None
 ) -> str:
     """
     Salva um currículo gerado e opcionalmente sua Cover Letter como um arquivo markdown no histórico.
+    Se filepath for fornecido, atualiza o arquivo existente; caso contrário, cria um novo com timestamp.
     Retorna o caminho do arquivo gerado.
     """
     _ensure_dir()
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_title = "".join([c if c.isalnum() else "_" for c in job_title]).strip("_")
-    filename = f"{timestamp}_{safe_title}_{uuid.uuid4().hex[:6]}.md"
-    filepath = os.path.join(get_history_dir(), filename)
+    if not filepath:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_title = "".join([c if c.isalnum() else "_" for c in job_title]).strip("_")
+        filename = f"{timestamp}_{safe_title}_{uuid.uuid4().hex[:6]}.md"
+        filepath = os.path.join(get_history_dir(), filename)
     
     metadata = {
         "job_title": job_title,
@@ -40,7 +46,10 @@ def save_resume(
         "language": language,
         "technologies": technologies or [],
         "date": datetime.now().isoformat(),
-        "has_cover_letter": bool(cover_letter.strip())
+        "has_cover_letter": bool(cover_letter.strip()),
+        "job_description": job_description.strip(),
+        "base_resume": base_resume.strip(),
+        "github_username": github_username.strip()
     }
     
     file_content = f"<!--\n{json.dumps(metadata, ensure_ascii=False)}\n-->\n\n{content.strip()}"
