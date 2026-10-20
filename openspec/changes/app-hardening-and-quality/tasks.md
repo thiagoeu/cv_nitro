@@ -26,5 +26,5 @@
 
 ## 5. Validação Integrada e Conclusão
 
-- [ ] 5.1 Executar a suíte completa de testes automatizados com `pytest`
-- [ ] 5.2 Verificar `git status` assegurando que nenhum arquivo temporário de teste foi gerado no diretório `history/`
+- [x] 5.1 Executar a suíte completa de testes automatizados com `pytest`
+- [x] 5.2 Verificar `git status` assegurando que nenhum arquivo temporário de teste foi gerado no diretório `history/`
