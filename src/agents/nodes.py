@@ -1,3 +1,4 @@
+import re
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
@@ -57,21 +58,27 @@ def github_researcher(state: dict) -> dict:
     Busca repositórios públicos do usuário no GitHub e extrai READMEs 
     dos repositórios que tenham as linguagens/tecnologias buscadas pela vaga.
     """
-    username = state.get("github_username", "")
+    username = (state.get("github_username") or "").strip()
     technologies = [t.lower() for t in state.get("job_technologies", [])]
     
     if not username:
+        return {"github_repos": [], "github_readmes": {}}
+
+    # Validação do nome de usuário do GitHub (alfanumérico com hifens simples internos, max 39 chars)
+    if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", username):
+        print(f"Nome de usuário GitHub inválido ou potencialmente inseguro: '{username}'")
         return {"github_repos": [], "github_readmes": {}}
         
     headers = {}
     token = config.GITHUB_TOKEN
     if token and "your_github_token_here" not in token:
-        headers["Authorization"] = f"token {token}"
+        headers["Authorization"] = f"Bearer {token}"
         
     repos_url = f"https://api.github.com/users/{username}/repos?type=public&sort=updated&per_page=30"
+    request_timeout = (5.0, 10.0)
     
     try:
-        response = requests.get(repos_url, headers=headers)
+        response = requests.get(repos_url, headers=headers, timeout=request_timeout)
         if response.status_code != 200:
             print(f"Erro ao acessar GitHub: {response.status_code}")
             return {"github_repos": [], "github_readmes": {}}
@@ -97,15 +104,20 @@ def github_researcher(state: dict) -> dict:
                     break
                     
         for repo in selected_repos:
-            readme_url = f"https://api.github.com/repos/{username}/{repo['name']}/readme"
+            repo_name = repo["name"]
+            # Validação do nome do repositório para evitar path traversal ou caracteres de controle
+            if not re.match(r"^[a-zA-Z0-9_.-]+$", repo_name):
+                continue
+                
+            readme_url = f"https://api.github.com/repos/{username}/{repo_name}/readme"
             try:
-                readme_resp = requests.get(readme_url, headers=headers)
+                readme_resp = requests.get(readme_url, headers=headers, timeout=request_timeout)
                 if readme_resp.status_code == 200:
                     content_b64 = readme_resp.json().get("content", "")
-                    content_str = base64.b64decode(content_b64).decode("utf-8")
-                    readmes[repo["name"]] = content_str
+                    content_str = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+                    readmes[repo_name] = content_str
             except Exception as e:
-                print(f"Erro ao baixar README de {repo['name']}: {e}")
+                print(f"Erro ao baixar README de {repo_name}: {e}")
                 
         return {
             "github_repos": selected_repos,
@@ -245,7 +257,11 @@ def quality_reviewer(state: dict) -> dict:
     attempts = state.get("review_attempts", 0)
     
     if attempts >= 2:
-        return {"reviewer_approved": True, "reviewer_feedback": "Aprovado por limite de tentativas", "review_attempts": attempts + 1}
+        return {
+            "reviewer_approved": False,
+            "reviewer_feedback": "Limite de tentativas de revisão atingido. Prosseguindo com versão atual.",
+            "review_attempts": attempts + 1
+        }
         
     portfolio_context = ""
     for repo in github_repos:
@@ -253,23 +269,22 @@ def quality_reviewer(state: dict) -> dict:
         readme = readmes.get(name, "")
         portfolio_context += f"\n### Repositório: {name}\nREADME:\n{readme[:500]}\n"
         
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
-    structured_llm = llm.with_structured_output(ReviewResult)
-    
-    prompt = PromptTemplate.from_template(
-        "Você é um auditor rigoroso de currículos técnicos de alto padrão.\n"
-        "Avalie o currículo gerado segundo dois critérios:\n"
-        "1. **Alucinações:** O candidato inventou tecnologias ou ferramentas nos projetos que NÃO constam no currículo base nem nos READMEs?\n"
-        "2. **Conformidade de Layout:** O currículo possui a tabela de 'HABILIDADES TÉCNICAS' e os bullet points no padrão '● **Tópico:** Ação...'?\n\n"
-        "--- CURRÍCULO BASE ---\n{base_resume}\n\n"
-        "--- READMEs FORNECIDOS ---\n{portfolio_context}\n\n"
-        "--- CURRÍCULO GERADO (Para revisão) ---\n{generated}\n\n"
-        "Retorne aprovado (True) se estiver tudo limpo e bem formatado, ou (False) se houver problemas, explicando no feedback."
-    )
-    
-    chain = prompt | structured_llm
-    
     try:
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+        structured_llm = llm.with_structured_output(ReviewResult)
+        
+        prompt = PromptTemplate.from_template(
+            "Você é um auditor rigoroso de currículos técnicos de alto padrão.\n"
+            "Avalie o currículo gerado segundo dois critérios:\n"
+            "1. **Alucinações:** O candidato inventou tecnologias ou ferramentas nos projetos que NÃO constam no currículo base nem nos READMEs?\n"
+            "2. **Conformidade de Layout:** O currículo possui a tabela de 'HABILIDADES TÉCNICAS' e os bullet points no padrão '● **Tópico:** Ação...'?\n\n"
+            "--- CURRÍCULO BASE ---\n{base_resume}\n\n"
+            "--- READMEs FORNECIDOS ---\n{portfolio_context}\n\n"
+            "--- CURRÍCULO GERADO (Para revisão) ---\n{generated}\n\n"
+            "Retorne aprovado (True) se estiver tudo limpo e bem formatado, ou (False) se houver problemas, explicando no feedback."
+        )
+        
+        chain = prompt | structured_llm
         result = chain.invoke({
             "base_resume": base_resume,
             "portfolio_context": portfolio_context,
@@ -282,7 +297,11 @@ def quality_reviewer(state: dict) -> dict:
         }
     except Exception as e:
         print(f"Erro no Quality Reviewer: {e}")
-        return {"reviewer_approved": True, "reviewer_feedback": f"Erro de API: {e}", "review_attempts": attempts + 1}
+        return {
+            "reviewer_approved": False,
+            "reviewer_feedback": f"Falha na API de auditoria de qualidade: {e}. Revise o conteúdo manualmente.",
+            "review_attempts": attempts + 1
+        }
 
 def cover_letter_generator(state: dict) -> dict:
     """

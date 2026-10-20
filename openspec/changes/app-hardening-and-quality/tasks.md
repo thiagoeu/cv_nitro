@@ -14,9 +14,9 @@
 
 ## 3. Hardening de Rede, Validação e Resiliência dos Agentes
 
-- [ ] 3.1 Implementar validação regex do nome de usuário GitHub e timeouts de conexão/leitura em `src/agents/nodes.py`
-- [ ] 3.2 Ajustar `quality_reviewer` para não aprovar automaticamente o currículo em caso de falha de API ou conexão
-- [ ] 3.3 Adicionar testes unitários com mocks em `tests/test_nodes.py` cobrindo timeout de rede e falha no revisor
+- [x] 3.1 Implementar validação regex do nome de usuário GitHub e timeouts de conexão/leitura em `src/agents/nodes.py`
+- [x] 3.2 Ajustar `quality_reviewer` para não aprovar automaticamente o currículo em caso de falha de API ou conexão
+- [x] 3.3 Adicionar testes unitários com mocks em `tests/test_nodes.py` cobrindo timeout de rede e falha no revisor
 
 ## 4. Parser de Documentos e Suporte a Tabelas
 
