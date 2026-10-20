@@ -2,9 +2,9 @@
 
 ## 1. Configuração e Isolamento da Suíte de Testes
 
-- [ ] 1.1 Criar `pytest.ini` configurando `pythonpath = .` para permitir execução direta do pytest
-- [ ] 1.2 Configurar fixture de isolamento de histórico em `tests/conftest.py` utilizando `tmp_path` e variável `HISTORY_DIR` para evitar poluição do repositório
-- [ ] 1.3 Executar `pytest` e validar que a descoberta de módulos funciona sem `ModuleNotFoundError`
+- [x] 1.1 Criar `pytest.ini` configurando `pythonpath = .` para permitir execução direta do pytest
+- [x] 1.2 Configurar fixture de isolamento de histórico em `tests/conftest.py` utilizando `tmp_path` e variável `HISTORY_DIR` para evitar poluição do repositório
+- [x] 1.3 Executar `pytest` e validar que a descoberta de módulos funciona sem `ModuleNotFoundError`
 
 ## 2. Sanitização contra Stored XSS e HTML Injection
 
