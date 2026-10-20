@@ -8,9 +8,9 @@
 
 ## 2. Sanitização contra Stored XSS e HTML Injection
 
-- [ ] 2.1 Aplicar sanitização com `html.escape` em todas as interpolações de strings em `src/core/resume_formatter.py`
-- [ ] 2.2 Adicionar testes unitários em `tests/test_resume_formatter.py` verificando escape de tags perigosas (`<script>`, `<img onerror>`) e links maliciosos
-- [ ] 2.3 Executar testes do formatador e validar prevenção de injeção
+- [x] 2.1 Aplicar sanitização com `html.escape` em todas as interpolações de strings em `src/core/resume_formatter.py`
+- [x] 2.2 Adicionar testes unitários em `tests/test_resume_formatter.py` verificando escape de tags perigosas (`<script>`, `<img onerror>`) e links maliciosos
+- [x] 2.3 Executar testes do formatador e validar prevenção de injeção
 
 ## 3. Hardening de Rede, Validação e Resiliência dos Agentes
 

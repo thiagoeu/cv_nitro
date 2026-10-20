@@ -1,4 +1,5 @@
 import re
+import html
 from typing import Optional
 
 def format_resume_to_html(markdown_content: str, title: Optional[str] = None) -> str:
@@ -52,13 +53,13 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         if line.startswith("# "):
             name = line[2:].strip()
             doc_title = name
-            html_body.append(f"<h1 class='candidate-name'>{name}</h1>")
+            html_body.append(f"<h1 class='candidate-name'>{html.escape(name)}</h1>")
             continue
 
         # Subtítulo H3: Cargo Alvo
         if line.startswith("### ") and not in_experience_or_projects(html_body):
             role = line[4:].strip()
-            html_body.append(f"<div class='candidate-role'>{role}</div>")
+            html_body.append(f"<div class='candidate-role'>{html.escape(role)}</div>")
             continue
 
         # Linha de contatos (Cidade | Email | etc.)
@@ -75,7 +76,7 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         # Seções principais H2
         if line.startswith("## "):
             sec_name = line[3:].strip()
-            html_body.append(f"<h2 class='section-title'>{sec_name}</h2>")
+            html_body.append(f"<h2 class='section-title'>{html.escape(sec_name)}</h2>")
             continue
 
         # Subseções H3 dentro de experiência/projetos
@@ -87,7 +88,7 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         # Subtítulo em itálico (Cargo | Período | Local)
         if (line.startswith("*") and line.endswith("*")) or (line.startswith("_") and line.endswith("_")):
             meta_info = line.strip("*_").strip()
-            html_body.append(f"<div class='entry-meta'>{meta_info}</div>")
+            html_body.append(f"<div class='entry-meta'>{html.escape(meta_info)}</div>")
             continue
 
         # Bullet points de impacto (- ● **Tópico**: ou - • **Tópico**: ou - **Tópico**:)
@@ -120,7 +121,7 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{doc_title}</title>
+    <title>{html.escape(doc_title)}</title>
     <style>
         :root {{
             --primary: #1e3a8a;
@@ -336,21 +337,53 @@ def in_experience_or_projects(body: list) -> bool:
     return False
 
 def _inline_format(text: str) -> str:
-    # Negrito **texto**
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    # Itálico *texto*
-    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
-    # Links markdown [texto](url)
-    text = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", r"<a href='\2' target='_blank'>\1</a>", text)
-    # URLs soltas https://...
-    text = re.sub(r"(?<!href=')(https?://[^\s<]+)", r"<a href='\1' target='_blank'>\1</a>", text)
-    return text
+    # 1. Escapa tags HTML perigosas para prevenir XSS
+    safe_text = html.escape(text, quote=True)
+    
+    # 2. Transforma links Markdown [texto](url) permitindo apenas esquemas seguros (http/https)
+    def replace_link(match):
+        label = match.group(1)
+        url = match.group(2)
+        if url.startswith("http://") or url.startswith("https://"):
+            return f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{label}</a>"
+        return label
+        
+    safe_text = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", replace_link, safe_text)
+    # Remove qualquer link markdown com esquema perigoso (ex: javascript:)
+    safe_text = re.sub(r"\[(.+?)\]\((?:javascript|data|vbscript):[^\s)]*\)", r"\1", safe_text, flags=re.IGNORECASE)
+    
+    # 3. Transforma URLs soltas seguras (sem reescrever links já transformados em <a>)
+    def replace_bare_url(match):
+        url = match.group(1)
+        return f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{url}</a>"
+        
+    safe_text = re.sub(r"(?<!href=')(https?://[^\s<]+)", replace_bare_url, safe_text)
+    
+    # 4. Transforma formatações em negrito e itálico
+    safe_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe_text)
+    safe_text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", safe_text)
+    return safe_text
 
 def _format_contact_item(c: str) -> str:
     c = c.strip()
+    # Verifica se o item é um link markdown [texto](url)
+    m = re.match(r"^\[(.+?)\]\((.+?)\)$", c)
+    if m:
+        label = html.escape(m.group(1))
+        url = m.group(2).strip()
+        if url.startswith("http://") or url.startswith("https://"):
+            safe_url = html.escape(url, quote=True)
+            return f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{label}</a>"
+        return label
+
+    safe_text = html.escape(c)
     if "@" in c and not c.startswith("http"):
-        return f"<a href='mailto:{c}'>{c}</a>"
+        return f"<a href='mailto:{safe_text}'>{safe_text}</a>"
     elif "linkedin.com" in c.lower() or "github.com" in c.lower():
-        url = c if c.startswith("http") else f"https://{c}"
-        return f"<a href='{url}' target='_blank'>{c}</a>"
-    return c
+        url = c if (c.startswith("http://") or c.startswith("https://")) else f"https://{c}"
+        if not (url.startswith("http://") or url.startswith("https://")):
+            url = f"https://{url}"
+        safe_url = html.escape(url, quote=True)
+        return f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{safe_text}</a>"
+    return safe_text
+
