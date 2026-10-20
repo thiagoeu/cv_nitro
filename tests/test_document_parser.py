@@ -37,3 +37,37 @@ def test_extract_text_pdf():
     # Testa que não quebra ao ler pdf (mesmo que página em branco retorne vazio)
     extracted = extract_text_from_file(stream)
     assert isinstance(extracted, str)
+
+def test_extract_text_docx_with_tables():
+    import docx
+    doc = docx.Document()
+    doc.add_heading("Currículo Com Tabelas", 0)
+    doc.add_paragraph("Resumo do candidato.")
+    
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Habilidades Backend"
+    table.cell(0, 1).text = "Python, FastAPI, Docker"
+    table.cell(1, 0).text = "Banco de Dados"
+    table.cell(1, 1).text = "PostgreSQL, MongoDB"
+    
+    stream = io.BytesIO()
+    doc.save(stream)
+    stream.seek(0)
+    stream.name = "curriculo_tabela.docx"
+    
+    extracted = extract_text_from_file(stream)
+    assert "Habilidades Backend" in extracted
+    assert "Python, FastAPI, Docker" in extracted
+    assert "PostgreSQL, MongoDB" in extracted
+
+def test_extract_text_unsupported_formats():
+    stream_doc = io.BytesIO(b"fake doc content")
+    stream_doc.name = "antigo.doc"
+    with pytest.raises(ValueError, match="legado .doc"):
+        extract_text_from_file(stream_doc)
+
+    stream_unknown = io.BytesIO(b"binary")
+    stream_unknown.name = "arquivo.exe"
+    with pytest.raises(ValueError, match="Formato de arquivo não suportado"):
+        extract_text_from_file(stream_unknown)
+

@@ -20,9 +20,9 @@
 
 ## 4. Parser de Documentos e Suporte a Tabelas
 
-- [ ] 4.1 Adicionar extração de texto em tabelas (`doc.tables`) e remover extensão inválida `.doc` em `src/core/document_parser.py` e `app.py`
-- [ ] 4.2 Adicionar teste unitário cobrindo extração de dados em tabelas DOCX e validação de formatos suportados
-- [ ] 4.3 Executar os testes de parser e validar extração completa
+- [x] 4.1 Adicionar extração de texto em tabelas (`doc.tables`) e remover extensão inválida `.doc` em `src/core/document_parser.py` e `app.py`
+- [x] 4.2 Adicionar teste unitário cobrindo extração de dados em tabelas DOCX e validação de formatos suportados
+- [x] 4.3 Executar os testes de parser e validar extração completa
 
 ## 5. Validação Integrada e Conclusão
 

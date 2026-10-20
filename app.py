@@ -227,7 +227,7 @@ def render_new_optimization():
     st.markdown("#### 1. Seu Currículo Base")
     uploaded_file = st.file_uploader(
         "Faça upload do seu currículo existente (PDF, DOCX, Markdown ou TXT):",
-        type=["pdf", "docx", "doc", "md", "txt"],
+        type=["pdf", "docx", "md", "txt"],
         help="O sistema extrairá o texto automaticamente preservando sua experiência."
     )
     

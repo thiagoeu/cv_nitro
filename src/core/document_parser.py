@@ -48,11 +48,29 @@ def extract_text_from_file(file_input: Union[str, BinaryIO, any], filename: str 
         except Exception as e:
             raise RuntimeError(f"Erro ao extrair texto do PDF ({filename}): {e}")
 
-    elif ext in [".docx", ".doc"]:
+    elif ext == ".docx":
         try:
             doc = docx.Document(stream)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            extracted_text = "\n\n".join(paragraphs)
+            content_parts = []
+            
+            # Extrai parágrafos normais
+            for p in doc.paragraphs:
+                p_text = p.text.strip()
+                if p_text:
+                    content_parts.append(p_text)
+                    
+            # Extrai texto de tabelas (frequentes em layouts de currículo)
+            for table in doc.tables:
+                for row in table.rows:
+                    row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    unique_cells = []
+                    for c in row_cells:
+                        if not unique_cells or c != unique_cells[-1]:
+                            unique_cells.append(c)
+                    if unique_cells:
+                        content_parts.append(" | ".join(unique_cells))
+                        
+            extracted_text = "\n\n".join(content_parts)
         except Exception as e:
             raise RuntimeError(f"Erro ao extrair texto do DOCX ({filename}): {e}")
 
@@ -65,6 +83,9 @@ def extract_text_from_file(file_input: Union[str, BinaryIO, any], filename: str 
                 extracted_text = raw.decode("latin-1")
         except Exception as e:
             raise RuntimeError(f"Erro ao extrair texto do arquivo ({filename}): {e}")
+
+    elif ext == ".doc":
+        raise ValueError("O formato legado .doc (Microsoft Word 97-2003) não é suportado. Por favor, salve ou converta o arquivo para .docx ou .pdf.")
 
     else:
         raise ValueError(f"Formato de arquivo não suportado: {ext}. Formatos suportados: .pdf, .docx, .md, .txt")
