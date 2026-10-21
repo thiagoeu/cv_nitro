@@ -517,7 +517,7 @@ def render_settings():
         st.markdown("""
         - **Desmarque a Cover Letter:** Ao gerar um currículo no assistente, desmarque a geração da carta se você precisa apenas do currículo. Isso economiza até 40% dos tokens por execução.
         - **Desmarque a Auditoria Rígida:** O modo econômico valida o currículo de forma ultra-rápida sem chamar uma segunda rodada de LLM.
-        - **Use o modelo Flash-Lite:** Configure `GEMINI_MODEL=gemini-2.0-flash-lite` no seu `.env` para respostas instantâneas e menor custo de cota.
+        - **Use o modelo Flash-Lite:** Configure `GEMINI_MODEL=gemini-3.5-flash-lite` no seu `.env` para respostas instantâneas e menor custo de cota.
         """)
 
 def main():
