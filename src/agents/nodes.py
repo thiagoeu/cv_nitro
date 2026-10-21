@@ -1,6 +1,7 @@
 import re
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 from src.core import config
@@ -42,7 +43,14 @@ def _llm(temperature: float, thinking_level: Optional[str] = "low") -> ChatGoogl
     """Cliente Gemini único: timeout/retries limitados evitam travar a UI; thinking 'low' corta a latência nas tarefas curtas."""
     extra = {"thinking_level": thinking_level} if thinking_level else {}
     # O gerador com thinking padrão já levou ~150s numa chamada: 300s dá folga sem esperar para sempre.
-    return ChatGoogleGenerativeAI(model=config.GEMINI_MODEL, temperature=temperature, timeout=300, max_retries=2, **extra)
+    def make(model: str) -> ChatGoogleGenerativeAI:
+        return ChatGoogleGenerativeAI(model=model, temperature=temperature, timeout=300, max_retries=2, **extra)
+    llm = make(config.GEMINI_MODEL)
+    fallback = config.GEMINI_FALLBACK_MODEL
+    if not fallback or fallback == config.GEMINI_MODEL:
+        return llm
+    # 503 "high demand" do Gemini persiste além dos retries: troca de modelo só em erro de servidor, não em prompt inválido.
+    return llm.with_fallbacks([make(fallback)], exceptions_to_handle=(ServerError,))
 
 def _text(response) -> str:
     """Gemini 3.x devolve `content` como lista de blocos; `.text` junta só o texto. Remove cercas ```markdown."""

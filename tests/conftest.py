@@ -3,6 +3,11 @@ import shutil
 import pytest
 
 @pytest.fixture(autouse=True)
+def no_llm_fallback(monkeypatch):
+    """Os testes mockam ChatGoogleGenerativeAI; o wrapper de fallback esconderia as chamadas ao mock."""
+    monkeypatch.setattr("src.core.config.GEMINI_FALLBACK_MODEL", "")
+
+@pytest.fixture(autouse=True)
 def isolate_test_history(tmp_path):
     """
     Garante que qualquer teste que utilize o history_manager utilize um diretório temporário,

@@ -221,3 +221,20 @@ def test_cover_letter_failure_has_no_fake_letter():
         result = cover_letter_generator(_en_state())
         assert result["generated_cover_letter_md"] == ""
         assert "429" in result["errors"][0]
+
+def test_llm_falls_back_on_503(monkeypatch):
+    from langchain_core.runnables import RunnableLambda
+    from google.genai.errors import ServerError
+    from src.agents.nodes import _llm
+    from src.core import config
+    monkeypatch.setattr(config, "GEMINI_FALLBACK_MODEL", "modelo-reserva")
+
+    def fake_llm(model, **_):
+        def run(_):
+            if model == config.GEMINI_MODEL:
+                raise ServerError(503, {"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}})
+            return model
+        return RunnableLambda(run)
+
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI", side_effect=fake_llm):
+        assert _llm(0).invoke("oi") == "modelo-reserva"
