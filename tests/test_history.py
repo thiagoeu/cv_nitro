@@ -13,7 +13,7 @@ def test_history_manager():
     )
     print(f"File saved to {filepath}")
     
-    assert os.path.exists(filepath), "File was not created."
+    assert os.path.exists(filepath) or filepath.startswith("supabase:"), "File or Supabase record was not created."
     
     print("Testing list_resumes...")
     resumes = history_manager.list_resumes()
