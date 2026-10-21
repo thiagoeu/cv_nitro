@@ -13,38 +13,42 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
     lines = markdown_content.strip().split("\n")
     html_body = []
     
-    in_table = False
     table_rows = []
-    
+    header_rows = 0  # linhas acima do separador "| --- |" são cabeçalho, em qualquer idioma
+
+    def flush_table():
+        nonlocal header_rows
+        if not table_rows:
+            return
+        html_body.append("<div class='skills-table-container'><table class='skills-table'>")
+        for r_idx, row in enumerate(table_rows):
+            tag = "th" if r_idx < header_rows else "td"
+            cells = "".join(
+                f"<{tag} class='{'col-cat' if c_idx == 0 else 'col-tech'}'>{_inline_format(cell)}</{tag}>"
+                for c_idx, cell in enumerate(row)
+            )
+            html_body.append(f"<tr>{cells}</tr>")
+        html_body.append("</table></div>")
+        table_rows.clear()
+        header_rows = 0
+
     # Extrai o título se não foi passado
     doc_title = title or "Currículo Profissional"
 
     for raw_line in lines:
         line = raw_line.strip()
-        
+
         # Linhas de tabela
         if line.startswith("|") and line.endswith("|"):
-            # Ignora linha divisória (| :--- | :--- |)
+            # Linha divisória (| :--- | :--- |): tudo acima dela é cabeçalho
             if re.match(r"^\|(\s*:?-+:?\s*\|)+$", line):
+                header_rows = len(table_rows)
                 continue
             cells = [c.strip() for c in line.strip("|").split("|")]
             if len(cells) >= 2:
                 table_rows.append(cells)
-                in_table = True
             continue
-        else:
-            if in_table and table_rows:
-                # Fecha tabela acumulada
-                html_body.append("<div class='skills-table-container'><table class='skills-table'>")
-                for r_idx, row in enumerate(table_rows):
-                    tag = "th" if r_idx == 0 and ("Categoria" in row[0] or "Category" in row[0]) else "td"
-                    html_body.append("<tr>")
-                    html_body.append(f"<{tag} class='col-cat'>{_inline_format(row[0])}</{tag}>")
-                    html_body.append(f"<{tag} class='col-tech'>{_inline_format(row[1])}</{tag}>")
-                    html_body.append("</tr>")
-                html_body.append("</table></div>")
-                table_rows = []
-                in_table = False
+        flush_table()
 
         if not line:
             continue
@@ -62,8 +66,8 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
             html_body.append(f"<div class='candidate-role'>{html.escape(role)}</div>")
             continue
 
-        # Linha de contatos (Cidade | Email | etc.)
-        if "|" in line and not line.startswith("|") and ("@" in line or "github" in line.lower() or "linkedin" in line.lower() or len(html_body) <= 3):
+        # Linha de contatos (Cidade | Email | etc.): só no cabeçalho, antes da primeira seção
+        if "|" in line and not line.startswith("|") and not in_experience_or_projects(html_body):
             contacts = [c.strip() for c in line.split("|")]
             formatted_contacts = []
             for c in contacts:
@@ -85,18 +89,16 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
             html_body.append(f"<h3 class='entry-title'>{_inline_format(sub_title)}</h3>")
             continue
 
-        # Subtítulo em itálico (Cargo | Período | Local)
-        if (line.startswith("*") and line.endswith("*")) or (line.startswith("_") and line.endswith("_")):
+        # Subtítulo em itálico (*Cargo | Período | Local*), sem confundir com "* item" ou "**negrito**"
+        if re.fullmatch(r"([*_])(?![*_\s]).+\1", line):
             meta_info = line.strip("*_").strip()
             html_body.append(f"<div class='entry-meta'>{html.escape(meta_info)}</div>")
             continue
 
-        # Bullet points de impacto (- ● **Tópico**: ou - • **Tópico**: ou - **Tópico**:)
+        # Bullet points de impacto (- **Tópico:** ou - ● **Tópico:** ou • **Tópico:**)
         if line.startswith("-") or line.startswith("*") or line.startswith("●") or line.startswith("•"):
-            # Limpa prefixo de lista
-            content = re.sub(r"^[-*●•\s]+", "", line).strip()
-            # Remove eventual ● interno
-            content = re.sub(r"^[●•\s]+", "", content).strip()
+            # Remove só o marcador de lista e o ●/• opcional, preservando o "**" do negrito
+            content = re.sub(r"^(?:[-*+]\s+)?[●•]?\s*", "", line)
             formatted_content = _inline_format(content)
             html_body.append(f"<div class='bullet-item'><span class='bullet-point'>●</span> <div class='bullet-text'>{formatted_content}</div></div>")
             continue
@@ -104,15 +106,7 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         # Parágrafos normais (ex: Resumo Profissional)
         html_body.append(f"<p class='paragraph'>{_inline_format(line)}</p>")
 
-    if in_table and table_rows:
-        html_body.append("<div class='skills-table-container'><table class='skills-table'>")
-        for r_idx, row in enumerate(table_rows):
-            tag = "th" if r_idx == 0 and ("Categoria" in row[0] or "Category" in row[0]) else "td"
-            html_body.append("<tr>")
-            html_body.append(f"<{tag} class='col-cat'>{_inline_format(row[0])}</{tag}>")
-            html_body.append(f"<{tag} class='col-tech'>{_inline_format(row[1])}</{tag}>")
-            html_body.append("</tr>")
-        html_body.append("</table></div>")
+    flush_table()
 
     body_content = "\n".join(html_body)
 

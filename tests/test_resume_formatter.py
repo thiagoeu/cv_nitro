@@ -39,7 +39,9 @@ Desenvolvedor Full Stack com sólida experiência no ecossistema Node.js, NestJS
     assert "RESUMO PROFISSIONAL" in html
     assert "<table class='skills-table'>" in html
     assert "Back-end &amp; Arquitetura:" in html
-    assert "Impacto Nacional:" in html
+    # Negrito do tópico preservado (antes saía "Impacto Nacional:** ..." com asteriscos soltos)
+    assert "<strong>Impacto Nacional:</strong>" in html
+    assert "**" not in html.split("<body>")[1]
     assert "class='bullet-item'" in html
     assert "@media print" in html
     assert "window.print()" in html
@@ -76,3 +78,23 @@ Parágrafo com <iframe src='evil.com'></iframe> e **<script>negrito perigoso</sc
     html_fallback = format_resume_to_html("Parágrafo sem H1", "<script>fallback_title</script>")
     assert "<title>&lt;script&gt;fallback_title&lt;/script&gt;</title>" in html_fallback
 
+
+def test_format_resume_table_header_any_language_and_contact_only_in_header():
+    sample_md = """# Jane Doe
+### Full Stack Engineer
+Remote | jane@mail.com | github.com/jane
+
+## TECHNICAL SKILLS
+| Category | Technologies & Concepts |
+| :--- | :--- |
+| **DevOps & Tools** | Docker, GitHub Actions, Linux |
+
+## CERTIFICATIONS
+- **AWS Cloud Practitioner:** AWS (2024) | github.com/jane/cert
+Tools | GitHub Actions
+"""
+    html = format_resume_to_html(sample_md)
+    assert "<th class='col-cat'>Category</th><th class='col-tech'>Technologies &amp; Concepts</th>" in html
+    assert "<td class='col-cat'><strong>DevOps &amp; Tools</strong></td>" in html
+    # Só a linha do cabeçalho vira barra de contatos
+    assert html.count("class='contact-bar'") == 1

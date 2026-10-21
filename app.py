@@ -17,12 +17,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inicializando o grafo
-@st.cache_resource
-def get_graph():
-    return build_graph()
+# Sem st.cache_resource: o cache mantinha nós antigos (modelo desativado) após editar o código. Compilar custa ms.
+graph = build_graph()
 
-graph = get_graph()
+def show_errors(errors: list):
+    for err in errors or []:
+        st.warning(f"⚠️ {err}")
 
 def render_sidebar():
     st.sidebar.title("📚 Histórico Rápido")
@@ -146,14 +146,19 @@ def render_application_view(filepath: str):
                                 filepath=filepath
                             )
                             st.session_state[f"show_rerun_{filepath}"] = False
-                            st.success("Currículo e Cover Letter re-otimizados e salvos com sucesso!")
+                            # Sobrevive ao st.rerun() para o aviso não sumir
+                            st.session_state[f"run_errors_{filepath}"] = final_state.get("errors", [])
                             st.rerun()
                         except Exception as e:
                             status.update(label="Falha na re-otimização", state="error", expanded=True)
                             st.error(f"Erro durante a execução: {e}")
             
+    if f"run_errors_{filepath}" in st.session_state:
+        st.success("Currículo otimizado e salvo com sucesso!")
+        show_errors(st.session_state.pop(f"run_errors_{filepath}"))
+
     st.subheader(f"💼 {job_title}")
-    
+
     # Metadados em badges
     meta_cols = st.columns(4)
     with meta_cols[0]:
@@ -193,7 +198,7 @@ def render_application_view(filepath: str):
                 mime="text/html",
                 width="stretch"
             )
-        st.components.v1.html(formatted_html, height=1000, scrolling=True)
+        st.iframe(formatted_html, height=1000)
         
     with tab_cv:
         st.download_button(
@@ -371,73 +376,27 @@ def render_new_optimization():
             st.write("🔍 Analisando a vaga e identificando idioma e tecnologias...")
             try:
                 final_state = graph.invoke(initial_state)
-                status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
-                
-                generated_md = final_state.get("generated_resume_md", "")
-                generated_cover = final_state.get("generated_cover_letter_md", "")
-                job_lang = final_state.get("job_language", "pt")
-                job_techs = final_state.get("job_technologies", [])
-                
-                # Salva no histórico com todos os novos metadados
-                saved_path = history_manager.save_resume(
-                    job_title=job_title,
-                    content=generated_md,
-                    job_url=job_url,
-                    cover_letter=generated_cover,
-                    language=job_lang,
-                    technologies=job_techs,
-                    job_description=job_desc,
-                    base_resume=base_resume,
-                    github_username=github_user
-                )
-                
-                st.success(f"Currículo e Cover Letter gerados no idioma: **{job_lang.upper()}**!")
-                
-                # Exibe abas de resultado
-                res_tab_a4, res_tab1, res_tab2 = st.tabs([
-                    "📑 Folha Formatada (A4 / Impressão)",
-                    "📄 Markdown Puro",
-                    "✉️ Carta de Apresentação (Cover Letter)"
-                ])
-                
-                formatted_html = format_resume_to_html(generated_md, job_title)
-                
-                with res_tab_a4:
-                    col_dl_h, _ = st.columns([1, 2])
-                    with col_dl_h:
-                        st.download_button(
-                            "🖨️ Baixar HTML Imprimível (Salvar como PDF)",
-                            data=formatted_html,
-                            file_name=f"Curriculo_{job_title.replace(' ', '_')}.html",
-                            mime="text/html",
-                            width="stretch"
-                        )
-                    st.components.v1.html(formatted_html, height=1000, scrolling=True)
-
-                with res_tab1:
-                    st.download_button(
-                        "📥 Baixar Currículo (.md)",
-                        data=generated_md,
-                        file_name=f"Curriculo_{job_title.replace(' ', '_')}.md",
-                        mime="text/markdown"
-                    )
-                    st.markdown(generated_md)
-                    
-                with res_tab2:
-                    if generated_cover:
-                        st.download_button(
-                            "📥 Baixar Cover Letter (.md)",
-                            data=generated_cover,
-                            file_name=f"CoverLetter_{job_title.replace(' ', '_')}.md",
-                            mime="text/markdown"
-                        )
-                        st.markdown(generated_cover)
-                    else:
-                        st.info("Nenhuma carta de apresentação gerada.")
-                        
             except Exception as e:
                 status.update(label="Falha na execução", state="error", expanded=True)
                 st.error(f"Erro durante a execução do grafo: {e}")
+                return
+            status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
+
+        saved_path = history_manager.save_resume(
+            job_title=job_title,
+            content=final_state.get("generated_resume_md", ""),
+            job_url=job_url,
+            cover_letter=final_state.get("generated_cover_letter_md", ""),
+            language=final_state.get("job_language", "pt"),
+            technologies=final_state.get("job_technologies", []),
+            job_description=job_desc,
+            base_resume=base_resume,
+            github_username=github_user
+        )
+        # Reusa a tela do histórico (mesmas abas A4 / Markdown / Cover Letter) e leva os avisos através do rerun
+        st.session_state[f"run_errors_{saved_path}"] = final_state.get("errors", [])
+        st.session_state.viewing_history = saved_path
+        st.rerun()
 
 def main():
     st.title("🎯 GitMatch - CV Nitro")

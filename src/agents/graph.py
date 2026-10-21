@@ -5,7 +5,8 @@ from src.agents.nodes import (
     github_researcher,
     resume_generator,
     quality_reviewer,
-    cover_letter_generator
+    cover_letter_generator,
+    MAX_REVIEW_ATTEMPTS
 )
 
 def route_after_review(state: dict) -> str:
@@ -13,7 +14,7 @@ def route_after_review(state: dict) -> str:
     Decide se o fluxo gera a Cover Letter após aprovação ou se esgotou as tentativas,
     ou se volta para o gerador de currículo.
     """
-    if state.get("reviewer_approved", False) or state.get("review_attempts", 0) >= 2:
+    if state.get("reviewer_approved", False) or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS:
         return "cover_letter_generator"
     else:
         return "resume_generator"

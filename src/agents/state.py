@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Dict, Any, Optional
+import operator
+from typing import Annotated, TypedDict, List, Dict, Any, Optional
 
 class GraphState(TypedDict):
     # Entradas do usuário
@@ -26,3 +27,6 @@ class GraphState(TypedDict):
     reviewer_feedback: Optional[str]
     reviewer_approved: bool
     review_attempts: int
+
+    # Falhas não fatais (revisor, carta) acumuladas para o app avisar o usuário
+    errors: Annotated[List[str], operator.add]

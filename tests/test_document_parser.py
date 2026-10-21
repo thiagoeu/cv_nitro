@@ -71,3 +71,20 @@ def test_extract_text_unsupported_formats():
     with pytest.raises(ValueError, match="Formato de arquivo não suportado"):
         extract_text_from_file(stream_unknown)
 
+
+def test_extract_text_docx_keeps_table_in_document_order():
+    import docx
+    doc = docx.Document()
+    doc.add_paragraph("HABILIDADES TÉCNICAS")
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Back-end:"
+    table.cell(0, 1).text = "Node.js, NestJS"
+    doc.add_paragraph("EXPERIÊNCIA PROFISSIONAL")
+
+    stream = io.BytesIO()
+    doc.save(stream)
+    stream.seek(0)
+    stream.name = "ordem.docx"
+
+    extracted = extract_text_from_file(stream)
+    assert extracted == "HABILIDADES TÉCNICAS\n\n| Back-end: | Node.js, NestJS |\n\nEXPERIÊNCIA PROFISSIONAL"

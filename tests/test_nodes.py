@@ -9,6 +9,8 @@ from src.agents.nodes import (
 from src.agents.graph import route_after_review
 from src.agents.state import GraphState
 import os
+import pytest
+from langchain_core.messages import AIMessage
 
 # Dummy fallback API key for testing structural parsing
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "dummy")
@@ -111,7 +113,9 @@ def test_quality_reviewer_api_failure_does_not_approve():
         result = quality_reviewer(state)
         assert result["reviewer_approved"] is False
         assert "Falha na API" in result["reviewer_feedback"]
-        assert result["review_attempts"] == 1
+        # Encerra o loop (regenerar com feedback de falha da API não ajuda) e avisa o usuário
+        assert route_after_review(result) == "cover_letter_generator"
+        assert "Revisor" in result["errors"][0]
 
 def test_quality_reviewer_max_attempts():
     state = GraphState(
@@ -168,10 +172,52 @@ def test_cover_letter_generator_structure():
     
     with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_instance = MagicMock()
-        mock_instance.invoke.return_value = MagicMock(content="Dear Hiring Manager,\nMock letter.")
+        # Formato real do Gemini 3.x: lista de blocos, às vezes com cerca ```markdown
+        mock_instance.invoke.return_value = AIMessage(content=[
+            {"type": "text", "text": "```markdown\nDear Hiring Manager,\nMock letter.\n```", "extras": {"signature": "x"}}
+        ])
         mock_llm_cls.return_value = mock_instance
         
         result = cover_letter_generator(state)
         assert "generated_cover_letter_md" in result
         assert result["generated_cover_letter_md"] is not None
-        assert "Dear Hiring Manager" in result["generated_cover_letter_md"]
+        assert result["generated_cover_letter_md"] == "Dear Hiring Manager,\nMock letter."
+
+def _en_state(**overrides):
+    state = {
+        "job_description": "Full Stack Engineer - React, Node.js",
+        "base_resume_md": "# Fulano\n## HABILIDADES TÉCNICAS\n- Node.js",
+        "job_language": "en",
+        "github_repos": [],
+        "github_readmes": {},
+        "generated_resume_md": "# Fulano",
+    }
+    state.update(overrides)
+    return state
+
+def test_resume_generator_prompt_in_job_language():
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+        mock_llm_cls.return_value.invoke.return_value = AIMessage(content=[{"type": "text", "text": "# Fulano"}])
+        result = resume_generator(_en_state())
+
+        system_prompt = mock_llm_cls.return_value.invoke.call_args.args[0][0].content
+        assert "TECHNICAL SKILLS" in system_prompt
+        assert "| Category |" in system_prompt
+        assert "TRADUZA" in system_prompt
+        assert "HABILIDADES TÉCNICAS" not in system_prompt
+        assert "| Categoria |" not in system_prompt
+        assert result["generated_resume_md"] == "# Fulano"
+
+def test_resume_generator_failure_propagates():
+    # Antes o currículo base era devolvido e salvo como se fosse otimizado
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+        mock_llm_cls.return_value.invoke.side_effect = Exception("404 model not found")
+        with pytest.raises(Exception, match="404"):
+            resume_generator(_en_state())
+
+def test_cover_letter_failure_has_no_fake_letter():
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+        mock_llm_cls.return_value.invoke.side_effect = Exception("429 quota")
+        result = cover_letter_generator(_en_state())
+        assert result["generated_cover_letter_md"] == ""
+        assert "429" in result["errors"][0]

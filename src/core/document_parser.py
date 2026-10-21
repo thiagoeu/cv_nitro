@@ -52,24 +52,25 @@ def extract_text_from_file(file_input: Union[str, BinaryIO, any], filename: str 
         try:
             doc = docx.Document(stream)
             content_parts = []
-            
-            # Extrai parágrafos normais
-            for p in doc.paragraphs:
-                p_text = p.text.strip()
-                if p_text:
-                    content_parts.append(p_text)
-                    
-            # Extrai texto de tabelas (frequentes em layouts de currículo)
-            for table in doc.tables:
-                for row in table.rows:
-                    row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    unique_cells = []
-                    for c in row_cells:
-                        if not unique_cells or c != unique_cells[-1]:
-                            unique_cells.append(c)
-                    if unique_cells:
-                        content_parts.append(" | ".join(unique_cells))
-                        
+
+            # Parágrafos e tabelas na ordem do documento: a tabela de habilidades fica sob o seu título
+            for block in doc.iter_inner_content():
+                if isinstance(block, docx.table.Table):
+                    table_lines = []
+                    for row in block.rows:
+                        row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                        # Células mescladas se repetem em row.cells
+                        unique_cells = []
+                        for c in row_cells:
+                            if not unique_cells or c != unique_cells[-1]:
+                                unique_cells.append(c)
+                        if unique_cells:
+                            table_lines.append("| " + " | ".join(unique_cells) + " |")
+                    if table_lines:
+                        content_parts.append("\n".join(table_lines))
+                elif block.text.strip():
+                    content_parts.append(block.text.strip())
+
             extracted_text = "\n\n".join(content_parts)
         except Exception as e:
             raise RuntimeError(f"Erro ao extrair texto do DOCX ({filename}): {e}")
