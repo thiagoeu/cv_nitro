@@ -208,6 +208,17 @@ def test_resume_generator_prompt_in_job_language():
         assert "| Categoria |" not in system_prompt
         assert result["generated_resume_md"] == "# Fulano"
 
+def test_resume_generator_uses_job_summary():
+    state = _en_state(job_description="Join Our Team! Great Place to Work... React role", job_summary="Senior React engineer",
+                      job_technologies=["React"], job_keywords=["ownership"])
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+        mock_llm_cls.return_value.invoke.return_value = AIMessage(content="# Fulano")
+        resume_generator(state)
+        user_prompt = mock_llm_cls.return_value.invoke.call_args.args[0][1].content
+        assert "Senior React engineer" in user_prompt
+        assert "React, ownership" in user_prompt
+        assert "Great Place to Work" not in user_prompt
+
 def test_resume_generator_failure_propagates():
     # Antes o currículo base era devolvido e salvo como se fosse otimizado
     with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
@@ -238,3 +249,16 @@ def test_llm_falls_back_on_503(monkeypatch):
 
     with patch("src.agents.nodes.ChatGoogleGenerativeAI", side_effect=fake_llm):
         assert _llm(0).invoke("oi") == "modelo-reserva"
+
+def test_llm_falls_back_to_groq_on_quota(monkeypatch):
+    from langchain_core.runnables import RunnableLambda
+    from src.agents.nodes import _llm
+    from src.core import config
+    monkeypatch.setattr(config, "GROQ_API_KEY", "gsk-teste")
+
+    def quota(_):
+        raise Exception("429 RESOURCE_EXHAUSTED")
+
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI", return_value=RunnableLambda(quota)), \
+         patch("src.agents.nodes.ChatGroq", return_value=RunnableLambda(lambda _: "groq")):
+        assert _llm(0).invoke("oi") == "groq"

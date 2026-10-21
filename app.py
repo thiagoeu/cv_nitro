@@ -506,7 +506,11 @@ def render_settings():
             st.success("🟢 Chave GEMINI_API_KEY configurada.")
         else:
             st.error("🔴 GEMINI_API_KEY não configurada no `.env`.")
-            
+        if config.GROQ_API_KEY:
+            st.success(f"🟢 Reserva Groq ativa: `{config.GROQ_MODEL}`")
+        else:
+            st.caption("⚪ GROQ_API_KEY não configurada (sem reserva quando a cota do Gemini acabar).")
+
     with c2:
         if config.GITHUB_TOKEN and "your_github_token" not in config.GITHUB_TOKEN:
             st.success("🟢 GITHUB_TOKEN configurado.")

@@ -6,6 +6,7 @@ import pytest
 def no_llm_fallback(monkeypatch):
     """Os testes mockam ChatGoogleGenerativeAI; o wrapper de fallback esconderia as chamadas ao mock."""
     monkeypatch.setattr("src.core.config.GEMINI_FALLBACK_MODEL", "")
+    monkeypatch.setattr("src.core.config.GROQ_API_KEY", "")
 
 @pytest.fixture(autouse=True)
 def isolate_test_history(tmp_path):

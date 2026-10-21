@@ -12,6 +12,7 @@ class GraphState(TypedDict):
     job_keywords: List[str]
     job_technologies: List[str]
     job_language: Optional[str]  # ex: 'en', 'pt', 'es'
+    job_summary: Optional[str]  # versão enxuta da vaga usada pelas etapas seguintes
     
     # Processado pelo GitHub Researcher
     github_repos: List[Dict[str, Any]]
