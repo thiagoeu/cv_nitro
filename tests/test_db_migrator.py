@@ -7,6 +7,8 @@ def test_db_migrator_local_mode(monkeypatch):
     assert status["supabase_connected"] is False
     assert status["local_ready"] is True
     assert "local" in status["message"].lower()
+    assert "sql_script" in status
+    assert "migration_instructions" in status
 
 def test_db_migrator_supabase_mocked():
     mock_client = MagicMock()
@@ -18,3 +20,9 @@ def test_db_migrator_supabase_mocked():
         assert status["supabase_connected"] is True
         assert status["applications_ready"] is True
         assert status["user_profiles_ready"] is True
+
+def test_db_migrator_get_schema_sql():
+    sql = db_migrator.get_schema_sql()
+    assert isinstance(sql, str)
+    assert len(sql) > 0
+    assert "applications" in sql
