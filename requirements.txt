@@ -1,12 +1,24 @@
+# Frameworks e Orquestração Multi-Agente
 langgraph
 langchain
 langchain-google-genai
 langchain-groq
-streamlit
+google-genai
 google-generativeai
+
+# Interface Web & Visualização de Dados
+streamlit
+pandas
+
+# Banco de Dados & Nuvem
+supabase
+
+# Utilitários de Documentos e Requisições
 requests
 python-dotenv
 pypdf
 python-docx
 tabulate
-supabase
+
+# Testes Automatizados
+pytest
