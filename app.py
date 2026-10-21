@@ -3,7 +3,7 @@ import pandas as pd
 from collections import Counter
 from datetime import datetime
 
-from src.core import history_manager, config
+from src.core import history_manager, config, auth_manager, profile_manager, db_migrator
 from src.core.document_parser import extract_text_from_file
 from src.core.resume_formatter import format_resume_to_html
 from src.agents.graph import build_graph
@@ -21,11 +21,15 @@ st.set_page_config(
 # Compilação do grafo LangGraph
 graph = build_graph()
 
+# Inicialização da Sessão do Usuário
+if "user_session" not in st.session_state:
+    st.session_state.user_session = auth_manager.create_guest_session()
+
 # Cache de alta performance para resposta instantânea ao clicar no Acesso Rápido
 @st.cache_data(ttl=30, show_spinner=False)
-def get_cached_resumes():
+def get_cached_resumes(user_id: str = "guest_local"):
     """Recupera lista de candidaturas com cache curto para garantir carregamento instantâneo."""
-    return history_manager.list_resumes()
+    return history_manager.list_resumes(user_id=user_id)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_cached_application(filepath: str):
@@ -41,11 +45,62 @@ def show_errors(errors: list):
     for err in errors or []:
         st.warning(f"⚠️ {err}")
 
+def render_auth_header():
+    """Renderiza o controle de autenticação do usuário na barra lateral."""
+    session = st.session_state.get("user_session", auth_manager.create_guest_session())
+    is_guest = session.get("is_guest", True)
+
+    if is_guest:
+        st.sidebar.caption("👤 **Status:** Convidado (Modo Local)")
+        with st.sidebar.popover("🔑 Entrar / Cadastrar", use_container_width=True):
+            tab_login, tab_signup = st.tabs(["Entrar", "Criar Conta"])
+            with tab_login:
+                st.markdown("##### 🔐 Acessar sua conta")
+                l_email = st.text_input("E-mail", key="auth_login_email")
+                l_pass = st.text_input("Senha", type="password", key="auth_login_pass")
+                if st.button("Fazer Login", type="primary", use_container_width=True, key="btn_do_login"):
+                    res = auth_manager.sign_in_with_password(l_email, l_pass)
+                    if res["success"]:
+                        st.session_state.user_session = res["user"]
+                        clear_history_cache()
+                        st.toast(f"Bem-vindo(a), {res['user']['display_name']}!")
+                        st.rerun()
+                    else:
+                        st.error(res["error"])
+            with tab_signup:
+                st.markdown("##### 📝 Nova conta")
+                s_name = st.text_input("Seu Nome", key="auth_signup_name")
+                s_email = st.text_input("E-mail", key="auth_signup_email")
+                s_pass = st.text_input("Senha (mín. 6 chars)", type="password", key="auth_signup_pass")
+                if st.button("Cadastrar", type="primary", use_container_width=True, key="btn_do_signup"):
+                    res = auth_manager.sign_up(s_email, s_pass, full_name=s_name)
+                    if res["success"]:
+                        st.session_state.user_session = res["user"]
+                        clear_history_cache()
+                        st.success(res.get("message", "Conta criada com sucesso!"))
+                        st.rerun()
+                    else:
+                        st.error(res["error"])
+    else:
+        st.sidebar.markdown(f"🟢 **Olá, {session.get('display_name', 'Candidato')}**")
+        st.sidebar.caption(f"Email: `{session.get('email', '')}`")
+        if st.sidebar.button("🚪 Sair (Logout)", use_container_width=True, key="btn_logout"):
+            auth_manager.sign_out()
+            st.session_state.user_session = auth_manager.create_guest_session()
+            clear_history_cache()
+            st.toast("Sessão encerrada.")
+            st.rerun()
+            
+    st.sidebar.markdown("---")
+
 def render_sidebar():
     st.sidebar.title("🎯 GitMatch - CV Nitro")
     st.sidebar.caption("Otimizador Multi-Agente & Diagnóstico ATS")
     st.sidebar.markdown("---")
     
+    # Controle de Autenticação / Perfil
+    render_auth_header()
+
     # Navegação Principal
     page = st.sidebar.radio(
         "Navegação",
@@ -62,7 +117,8 @@ def render_sidebar():
     st.sidebar.subheader("⚡ Acesso Rápido")
     st.sidebar.caption("🕒 Mais recentes primeiro:")
     
-    resumes = get_cached_resumes()
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
+    resumes = get_cached_resumes(current_uid)
     if not resumes:
         st.sidebar.caption("Nenhuma candidatura salva ainda.")
     else:
@@ -86,6 +142,7 @@ def render_application_view(filepath: str):
     lang = (metadata.get("language") or "pt").upper()
     date_str = history_manager.format_display_date(metadata.get("date", ""))
     diagnostic = metadata.get("diagnostic", {})
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
     
     col_back, col_rerun, col_delete = st.columns([1.5, 2.5, 2.0])
     with col_back:
@@ -190,7 +247,8 @@ def render_application_view(filepath: str):
                                 base_resume=r_base,
                                 github_username=r_github,
                                 filepath=filepath,
-                                diagnostic=new_diag
+                                diagnostic=new_diag,
+                                user_id=current_uid
                             )
                             clear_history_cache()
                             st.session_state[f"show_rerun_{filepath}"] = False
@@ -341,6 +399,10 @@ def render_new_optimization():
     st.markdown("### 🚀 Assistente de Otimização de Currículo")
     st.caption("Preencha as informações abaixo passo a passo para a IA analisar a vaga e estruturar o melhor currículo ATS.")
     
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
+    current_email = st.session_state.user_session.get("email", "")
+    user_prof = profile_manager.get_user_profile(current_uid, current_email)
+    
     # ETAPA 1
     st.markdown("#### 1. Currículo Base do Candidato")
     uploaded_file = st.file_uploader(
@@ -357,11 +419,17 @@ def render_new_optimization():
         except Exception as e:
             st.error(f"Erro ao processar o arquivo: {e}")
             
+    # Pré-preenchimento inteligente a partir do perfil
+    default_base_text = extracted_text or user_prof.get("base_resume", "")
+    if user_prof.get("base_resume") and not extracted_text:
+        st.info("💡 **Currículo base carregado do seu perfil salvo!** Você pode editar abaixo ou manter como está.")
+        
     base_resume = st.text_area(
         "Texto do Currículo Base (edite ou cole diretamente aqui):",
-        value=extracted_text,
+        value=default_base_text,
         height=200,
-        placeholder="Cole seu currículo aqui ou faça o upload do arquivo acima..."
+        placeholder="Cole seu currículo aqui ou faça o upload do arquivo acima...",
+        key="wizard_base_resume"
     )
     
     st.markdown("---")
@@ -369,12 +437,19 @@ def render_new_optimization():
     st.markdown("#### 2. Informações da Vaga Alvo")
     col_vaga1, col_vaga2 = st.columns([2, 1])
     with col_vaga1:
-        job_title = st.text_input("Título da Vaga *", placeholder="Ex: Senior Python Engineer / Especialista em Dados")
+        job_title = st.text_input("Título da Vaga *", placeholder="Ex: Senior Python Engineer / Especialista em Dados", key="wizard_job_title")
     with col_vaga2:
-        job_url = st.text_input("Link da Vaga (URL opcional)", placeholder="Ex: https://linkedin.com/jobs/view/...")
+        job_url = st.text_input("Link da Vaga (URL opcional)", placeholder="Ex: https://linkedin.com/jobs/view/...", key="wizard_job_url")
         
-    github_user = st.text_input("Usuário do GitHub (opcional para cruzar projetos reais)", placeholder="Ex: octocat")
-    job_desc = st.text_area("Descrição Completa da Vaga *", height=180, placeholder="Cole aqui a descrição dos requisitos e responsabilidades da vaga...")
+    default_github = user_prof.get("github_username", "")
+    github_user = st.text_input(
+        "Usuário do GitHub (opcional para cruzar projetos reais)",
+        value=default_github,
+        placeholder="Ex: octocat",
+        help="Preenchido automaticamente a partir do seu perfil para economizar consultas e tokens.",
+        key="wizard_github_user"
+    )
+    job_desc = st.text_area("Descrição Completa da Vaga *", height=180, placeholder="Cole aqui a descrição dos requisitos e responsabilidades da vaga...", key="wizard_job_desc")
     
     st.markdown("---")
     # ETAPA 3
@@ -394,7 +469,7 @@ def render_new_optimization():
         )
 
     st.markdown("---")
-    submit = st.button("Gerar Currículo Otimizado & Diagnóstico ATS 🚀", type="primary", width="stretch")
+    submit = st.button("Gerar Currículo Otimizado & Diagnóstico ATS 🚀", type="primary", width="stretch", key="wizard_submit_btn")
     
     if submit:
         if not job_title or not job_desc or not base_resume:
@@ -440,7 +515,8 @@ def render_new_optimization():
             job_description=job_desc,
             base_resume=base_resume,
             github_username=github_user,
-            diagnostic=final_state.get("diagnostic", {})
+            diagnostic=final_state.get("diagnostic", {}),
+            user_id=current_uid
         )
         clear_history_cache()
         st.session_state[f"run_errors_{saved_path}"] = final_state.get("errors", [])
@@ -510,14 +586,77 @@ def render_applications_list(resumes: list):
 
 def render_settings():
     st.markdown("### ⚙️ Configurações & Status do Sistema")
-    st.caption("Verifique o status das conexões com o banco de dados na nuvem e provedores de Inteligência Artificial.")
+    st.caption("Verifique o status das conexões com o banco de dados na nuvem, seu perfil do candidato e provedores de Inteligência Artificial.")
     
-    # 1. Banco de Dados / Persistência
-    st.markdown("#### 1. Persistência de Dados (Supabase / Local)")
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
+    current_email = st.session_state.user_session.get("email", "")
+
+    # 1. Perfil do Candidato (Currículo Base & Cache GitHub)
+    st.markdown("#### 👤 Meu Perfil de Candidato (Currículo Base & Projetos)")
+    st.caption("Salve seus dados aqui para que o assistente os reutilize automaticamente, eliminando digitação e economizando tokens.")
+    
+    prof = profile_manager.get_user_profile(current_uid, current_email)
+    
+    col_p1, col_p2 = st.columns([2, 1])
+    with col_p1:
+        p_name = st.text_input("Nome Completo do Candidato", value=prof.get("full_name", ""), key="settings_p_name")
+    with col_p2:
+        p_github = st.text_input("Usuário do GitHub", value=prof.get("github_username", ""), key="settings_p_github")
+
+    p_resume = st.text_area(
+        "Currículo Base Padrão (Markdown ou texto puro)",
+        value=prof.get("base_resume", ""),
+        height=200,
+        help="Este currículo será inserido automaticamente em qualquer nova otimização.",
+        key="settings_p_resume"
+    )
+
+    col_save_p, col_gh_fetch = st.columns(2)
+    with col_save_p:
+        if st.button("💾 Salvar Perfil do Candidato", type="primary", width="stretch", key="btn_save_profile"):
+            updated_prof = {
+                "email": current_email,
+                "full_name": p_name,
+                "github_username": p_github,
+                "base_resume": p_resume,
+                "cached_repos": prof.get("cached_repos", []),
+                "skills": prof.get("skills", [])
+            }
+            profile_manager.save_user_profile(current_uid, updated_prof)
+            st.toast("Perfil salvo com sucesso!")
+            st.success("Currículo base e dados de perfil foram atualizados.")
+            
+    with col_gh_fetch:
+        if st.button("🔄 Atualizar Cache do GitHub", width="stretch", key="btn_sync_gh_cache", help="Busca seus repositórios no GitHub para alimentar o cache de economia de tokens"):
+            if not p_github:
+                st.warning("Preencha o usuário do GitHub acima para buscar seus projetos.")
+            else:
+                with st.spinner(f"Buscando projetos públicos de @{p_github}..."):
+                    from src.agents.nodes import github_researcher
+                    gh_state = {"github_username": p_github, "job_technologies": []}
+                    gh_res = github_researcher(gh_state)
+                    repos = gh_res.get("github_repos", [])
+                    profile_manager.update_cached_github_repos(current_uid, repos)
+                    st.toast(f"{len(repos)} projeto(s) salvos no cache do seu perfil!")
+                    st.rerun()
+
+    cached_projects = prof.get("cached_repos", [])
+    if cached_projects:
+        with st.expander(f"📦 Projetos do GitHub em Cache ({len(cached_projects)} repositórios)", expanded=False):
+            for r in cached_projects:
+                st.markdown(f"- **{r.get('name')}** ({r.get('language') or 'Sem linguagem'}): {r.get('description') or 'Sem descrição'}")
+
+    st.markdown("---")
+    # 2. Banco de Dados / Persistência
+    st.markdown("#### 2. Persistência de Dados (Supabase / Local)")
+    db_status = db_migrator.check_or_setup_tables()
     is_supa = history_manager.is_supabase_configured()
+    
     if is_supa:
-        st.success("🟢 **Supabase Conectado:** Suas candidaturas e diagnósticos estão sendo salvos no banco de dados PostgreSQL na nuvem.")
+        st.success("🟢 **Supabase Conectado:** Suas candidaturas, perfis e diagnósticos estão sendo salvos no banco de dados PostgreSQL na nuvem.")
         st.caption(f"Host: `{config.SUPABASE_URL[:25]}...`")
+        if not db_status.get("user_profiles_ready"):
+            st.warning("⚠️ A tabela `user_profiles` ainda não foi criada no Supabase. Execute o script `supabase_schema.sql` no SQL Editor do painel do Supabase para ativar perfis em nuvem.")
         
         c_sync, c_clean = st.columns(2)
         with c_sync:
@@ -547,8 +686,8 @@ def render_settings():
             """)
 
     st.markdown("---")
-    # 2. Provedores de IA & Economia de Tokens
-    st.markdown("#### 2. Inteligência Artificial & Consumo de Tokens")
+    # 3. Provedores de IA & Economia de Tokens
+    st.markdown("#### 3. Inteligência Artificial & Consumo de Tokens")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**Modelo Ativo:** `{config.GEMINI_MODEL}`")
@@ -569,6 +708,8 @@ def render_settings():
 
     with st.expander("💡 Dicas para Economizar Tokens e Evitar Limite de Cota (429)", expanded=True):
         st.markdown("""
+        - **Salve seu Currículo Base no Perfil:** Com o currículo base salvo, você não precisa reenviar o arquivo toda vez.
+        - **Projetos em Cache:** O cache de repositórios do seu perfil evita consultas repetitivas ao GitHub e corta até 50% do tamanho do prompt enviado ao LLM.
         - **Desmarque a Cover Letter:** Ao gerar um currículo no assistente, desmarque a geração da carta se você precisa apenas do currículo. Isso economiza até 40% dos tokens por execução.
         - **Desmarque a Auditoria Rígida:** O modo econômico valida o currículo de forma ultra-rápida sem chamar uma segunda rodada de LLM.
         - **Use o modelo Flash-Lite:** Configure `GEMINI_MODEL=gemini-3.5-flash-lite` no seu `.env` para respostas instantâneas e menor custo de cota.
@@ -576,13 +717,14 @@ def render_settings():
 
 def main():
     selected_page = render_sidebar()
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
     
     # Se estiver no modo de visualização de histórico
     if "viewing_history" in st.session_state:
         render_application_view(st.session_state.viewing_history)
         return
         
-    resumes = get_cached_resumes()
+    resumes = get_cached_resumes(current_uid)
     
     if selected_page == "📊 Dashboard Executivo":
         render_dashboard(resumes)

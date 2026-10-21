@@ -108,15 +108,16 @@ def save_resume(
     base_resume: str = "",
     github_username: str = "",
     filepath: Optional[str] = None,
-    diagnostic: Optional[Dict[str, Any]] = None
+    diagnostic: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None
 ) -> str:
     """
     Salva ou atualiza uma candidatura (currículo, carta, metadados e diagnóstico).
     Prioriza o Supabase quando configurado, mantendo gravação no histórico local como fallback.
-    Previne duplicatas checando e reaproveitando IDs existentes.
+    Previne duplicatas checando e reaproveitando IDs existentes e associa ao user_id.
     """
     _ensure_dir()
-    now_iso = datetime.now().isoformat()
+    now_iso = datetime.now().astimezone().isoformat()
     techs = technologies or []
     diag = diagnostic or {}
 
@@ -151,6 +152,9 @@ def save_resume(
                 "diagnostic": diag,
                 "updated_at": now_iso
             }
+            if user_id and user_id != "guest_local":
+                payload["user_id"] = user_id
+
             if supabase_id:
                 # Atualização idempotente (evita duplicações no banco)
                 supabase_client.table("applications").update(payload).eq("id", supabase_id).execute()
@@ -183,6 +187,8 @@ def save_resume(
         "github_username": (github_username or "").strip(),
         "diagnostic": diag
     }
+    if user_id:
+        metadata["user_id"] = user_id
     if supabase_id:
         metadata["supabase_id"] = supabase_id
 
@@ -199,11 +205,11 @@ def save_resume(
         return f"supabase:{supabase_id}"
     return local_filepath
 
-def list_resumes() -> List[Dict[str, Any]]:
+def list_resumes(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retorna a lista unificada de candidaturas salvas, ordenadas estritamente
     da mais recente para a mais antiga (ordem cronológica decrescente).
-    Mescla registros do Supabase com o histórico local sem duplicá-los.
+    Mescla registros do Supabase com o histórico local filtrando por user_id quando informado.
     """
     resumes_map: Dict[str, Dict[str, Any]] = {}
     known_supabase_ids = set()
@@ -212,7 +218,10 @@ def list_resumes() -> List[Dict[str, Any]]:
     supabase_client = get_supabase_client()
     if supabase_client:
         try:
-            res = supabase_client.table("applications").select("*").order("created_at", desc=True).execute()
+            query = supabase_client.table("applications").select("*").order("created_at", desc=True)
+            if user_id and user_id != "guest_local":
+                query = query.eq("user_id", user_id)
+            res = query.execute()
             if res.data:
                 for row in res.data:
                     row_id = str(row.get("id"))
@@ -227,7 +236,8 @@ def list_resumes() -> List[Dict[str, Any]]:
                         "filepath": f"supabase:{row_id}",
                         "filename": f"supabase_{row_id}.md",
                         "diagnostic": row.get("diagnostic") or {},
-                        "supabase_id": row_id
+                        "supabase_id": row_id,
+                        "user_id": str(row.get("user_id")) if row.get("user_id") else None
                     }
                     resumes_map[f"supabase:{row_id}"] = item
         except Exception as e:
@@ -253,6 +263,12 @@ def list_resumes() -> List[Dict[str, Any]]:
                 if sub_id and str(sub_id) in known_supabase_ids:
                     continue
 
+                file_uid = metadata.get("user_id")
+                # Se um user_id específico de usuário autenticado foi solicitado, filtra arquivos de outros usuários
+                if user_id and user_id != "guest_local":
+                    if file_uid and file_uid != user_id:
+                        continue
+
                 metadata.setdefault("job_title", os.path.splitext(os.path.basename(file))[0])
                 metadata.setdefault("job_url", "")
                 metadata.setdefault("language", "pt")
@@ -263,6 +279,7 @@ def list_resumes() -> List[Dict[str, Any]]:
 
                 metadata["filepath"] = file
                 metadata["filename"] = os.path.basename(file)
+                metadata["user_id"] = file_uid
                 
                 # Chave única para o mapa local
                 key = f"local:{file}"

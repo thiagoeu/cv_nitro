@@ -155,3 +155,31 @@ def test_delete_application():
     resumes_after = history_manager.list_resumes()
     assert not any(r["job_title"] == "To Delete" for r in resumes_after)
 
+def test_user_id_isolation():
+    # Salva aplicações para dois usuários distintos
+    f_user_a = history_manager.save_resume(
+        job_title="Dev Python para User A",
+        content="Resume A",
+        technologies=["Python"],
+        user_id="user-aaa-111"
+    )
+    f_user_b = history_manager.save_resume(
+        job_title="Dev React para User B",
+        content="Resume B",
+        technologies=["React"],
+        user_id="user-bbb-222"
+    )
+
+    # 1. User A só deve enxergar sua própria vaga
+    resumes_a = history_manager.list_resumes(user_id="user-aaa-111")
+    titles_a = [r["job_title"] for r in resumes_a]
+    assert "Dev Python para User A" in titles_a
+    assert "Dev React para User B" not in titles_a
+
+    # 2. User B só deve enxergar sua própria vaga
+    resumes_b = history_manager.list_resumes(user_id="user-bbb-222")
+    titles_b = [r["job_title"] for r in resumes_b]
+    assert "Dev React para User B" in titles_b
+    assert "Dev Python para User A" not in titles_b
+
+
