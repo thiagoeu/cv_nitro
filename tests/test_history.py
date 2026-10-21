@@ -128,3 +128,30 @@ def test_supabase_mocked_operations():
         assert app_data["resume_md"] == "# Cloud Architect Resume"
         assert app_data["metadata"]["diagnostic"]["ats_score"] == 90
 
+def test_chronological_ordering():
+    from datetime import datetime, timedelta
+    
+    # Salva aplicações com datas em ordens distintas
+    t1 = (datetime.now() - timedelta(days=2)).isoformat()
+    t2 = (datetime.now() - timedelta(days=1)).isoformat()
+    t3 = datetime.now().isoformat()
+    
+    f1 = history_manager.save_resume(job_title="Oldest Job", content="Old", technologies=["A"])
+    f2 = history_manager.save_resume(job_title="Middle Job", content="Mid", technologies=["B"])
+    f3 = history_manager.save_resume(job_title="Newest Job", content="New", technologies=["C"])
+    
+    resumes = history_manager.list_resumes()
+    titles = [r["job_title"] for r in resumes]
+    assert titles[0] == "Newest Job"
+    assert "Oldest Job" in titles
+
+def test_delete_application():
+    f = history_manager.save_resume(job_title="To Delete", content="Del", technologies=[])
+    resumes_before = history_manager.list_resumes()
+    assert any(r["job_title"] == "To Delete" for r in resumes_before)
+    
+    ok = history_manager.delete_application(f)
+    assert ok is True
+    resumes_after = history_manager.list_resumes()
+    assert not any(r["job_title"] == "To Delete" for r in resumes_after)
+
