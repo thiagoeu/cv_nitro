@@ -23,10 +23,15 @@ class GraphState(TypedDict):
     # Processado pelo Cover Letter Generator
     generated_cover_letter_md: Optional[str]
     
-    # Processado pelo Quality Reviewer
+    # Configurações de execução modular e economia de tokens
+    generate_cover_letter: bool
+    strict_review: bool
+
+    # Processado pelo Quality Reviewer / Diagnóstico ATS
     reviewer_feedback: Optional[str]
     reviewer_approved: bool
     review_attempts: int
+    diagnostic: Optional[Dict[str, Any]]
 
     # Falhas não fatais (revisor, carta) acumuladas para o app avisar o usuário
     errors: Annotated[List[str], operator.add]

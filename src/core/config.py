@@ -8,6 +8,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY não encontrada nas variáveis de ambiente.")
     

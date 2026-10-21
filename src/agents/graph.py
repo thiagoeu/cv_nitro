@@ -12,9 +12,11 @@ from src.agents.nodes import (
 def route_after_review(state: dict) -> str:
     """
     Decide se o fluxo gera a Cover Letter após aprovação ou se esgotou as tentativas,
-    ou se volta para o gerador de currículo.
+    ou se encerra diretamente quando generate_cover_letter é False, ou se volta para o gerador.
     """
     if state.get("reviewer_approved", False) or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS:
+        if state.get("generate_cover_letter", True) is False:
+            return END
         return "cover_letter_generator"
     else:
         return "resume_generator"
@@ -44,7 +46,8 @@ def build_graph():
         route_after_review,
         {
             "cover_letter_generator": "cover_letter_generator",
-            "resume_generator": "resume_generator"
+            "resume_generator": "resume_generator",
+            END: END
         }
     )
     
