@@ -20,16 +20,8 @@ CREATE TABLE IF NOT EXISTS public.applications (
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Garantir adição de user_id caso a tabela já exista
-DO $$ 
-BEGIN 
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_schema = 'public' AND table_name = 'applications' AND column_name = 'user_id'
-    ) THEN 
-        ALTER TABLE public.applications ADD COLUMN user_id UUID; 
-    END IF; 
-END $$;
+-- Garantir adição de user_id caso a tabela já exista sem essa coluna
+ALTER TABLE public.applications ADD COLUMN IF NOT EXISTS user_id UUID;
 
 -- Índices para buscas e ordenação rápida
 CREATE INDEX IF NOT EXISTS idx_applications_created_at ON public.applications (created_at DESC);
@@ -67,6 +59,17 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Caso a tabela user_profiles já tenha sido criada anteriormente sem algumas colunas:
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS email TEXT DEFAULT '';
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS full_name TEXT DEFAULT '';
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS base_resume TEXT DEFAULT '';
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS github_username TEXT DEFAULT '';
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS cached_repos JSONB DEFAULT '[]'::JSONB;
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '[]'::JSONB;
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 
 -- Habilitar RLS em user_profiles
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;

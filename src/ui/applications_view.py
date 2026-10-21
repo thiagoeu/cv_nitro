@@ -133,7 +133,7 @@ def render_application_view(
 
     # Cabeçalho da vaga
     st.header(job_title, anchor=False)
-    meta = [f":violet-badge[:material/calendar_today: {date_str}]", f":blue-badge[:material/translate: {lang}]"]
+    meta = [f":gray-badge[:material/calendar_today: {date_str}]", f":blue-badge[:material/translate: {lang}]"]
     if job_url:
         meta.append(f"[:material/open_in_new: Ver anúncio da vaga]({job_url})")
     st.markdown("  ".join(meta))
