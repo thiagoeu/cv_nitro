@@ -7,9 +7,27 @@ from src.ui.navbar import set_page
 def render_dashboard_view(resumes: list):
     """
     Renderiza o painel executivo de métricas e gráficos analíticos.
+    Protege o acesso a dados exigindo usuário autenticado.
     """
+    session = st.session_state.get("user_session", {})
+    is_guest = session.get("is_guest", True)
+
     st.markdown("### 📊 Painel Geral de Candidaturas")
     st.caption("Visão executiva do seu funil e métricas de mercado (ordenado por data mais recente).")
+
+    # Controle de Acesso: Requer Login para Visualizar Dados Privados
+    if is_guest:
+        st.warning("🔒 **Acesso Exclusivo para Usuários Conectados**\n\nO Dashboard consolida métricas privadas, funil de candidaturas e comparativos ATS das suas vagas. Faça login ou crie sua conta para desbloquear seu painel analítico.")
+        col_login, col_signup = st.columns(2)
+        with col_login:
+            if st.button("🔑 Acessar Minha Conta", type="primary", key="dash_btn_login_auth", use_container_width=True):
+                set_page("login")
+                st.rerun()
+        with col_signup:
+            if st.button("✨ Criar Conta Gratuita", key="dash_btn_signup_auth", use_container_width=True):
+                set_page("signup")
+                st.rerun()
+        return
     
     if not resumes:
         st.info("Nenhuma candidatura registrada ainda. Clique no botão abaixo para gerar seu primeiro currículo otimizado!")

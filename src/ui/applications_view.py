@@ -5,7 +5,7 @@ from src.core import history_manager
 from src.core.resume_formatter import format_resume_to_html
 from src.agents.state import GraphState
 from src.ui.diagnostic_view import render_ats_diagnostic_panel
-from src.ui.navbar import clear_transient_state
+from src.ui.navbar import clear_transient_state, set_page
 
 def render_application_view(
     filepath: str,
@@ -276,7 +276,25 @@ def render_applications_view(
     """
     Roteador interno da seção de Candidaturas. Se houver visualização de item ativa,
     renderiza o detalhe; caso contrário, renderiza a lista.
+    Protege o acesso a dados exigindo autenticação.
     """
+    session = st.session_state.get("user_session", {})
+    is_guest = session.get("is_guest", True)
+
+    if is_guest:
+        st.markdown("### 📚 Central de Candidaturas")
+        st.warning("🔒 **Acesso Protegido:** Suas candidaturas, currículos gerados e cartas de apresentação são dados privados. Conecte-se à sua conta para visualizá-los e imprimi-los.")
+        col_l, col_s = st.columns(2)
+        with col_l:
+            if st.button("🔑 Fazer Login", type="primary", key="apps_btn_login_auth", use_container_width=True):
+                set_page("login")
+                st.rerun()
+        with col_s:
+            if st.button("✨ Criar Conta", key="apps_btn_signup_auth", use_container_width=True):
+                set_page("signup")
+                st.rerun()
+        return
+
     if "viewing_history" in st.session_state and st.session_state.viewing_history:
         render_application_view(
             st.session_state.viewing_history,

@@ -218,28 +218,51 @@ def list_resumes(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     supabase_client = get_supabase_client()
     if supabase_client:
         try:
-            query = supabase_client.table("applications").select("*").order("created_at", desc=True)
+            # Segurança e RLS: só consulta dados do Supabase para usuários autenticados com UUID válido
+            # Usuários convidados (guest_local) não têm acesso aos dados de outros usuários
             if user_id and user_id != "guest_local":
-                query = query.eq("user_id", user_id)
-            res = query.execute()
-            if res.data:
-                for row in res.data:
-                    row_id = str(row.get("id"))
-                    known_supabase_ids.add(row_id)
-                    item = {
-                        "job_title": row.get("job_title", "Vaga"),
-                        "job_url": row.get("job_url", ""),
-                        "language": row.get("language", "pt"),
-                        "technologies": row.get("technologies") or [],
-                        "date": row.get("created_at", datetime.now().isoformat()),
-                        "has_cover_letter": row.get("has_cover_letter", bool(row.get("cover_letter_md"))),
-                        "filepath": f"supabase:{row_id}",
-                        "filename": f"supabase_{row_id}.md",
-                        "diagnostic": row.get("diagnostic") or {},
-                        "supabase_id": row_id,
-                        "user_id": str(row.get("user_id")) if row.get("user_id") else None
-                    }
-                    resumes_map[f"supabase:{row_id}"] = item
+                query = supabase_client.table("applications").select("*").eq("user_id", user_id).order("created_at", desc=True)
+                res = query.execute()
+                if res.data:
+                    for row in res.data:
+                        row_id = str(row.get("id"))
+                        known_supabase_ids.add(row_id)
+                        item = {
+                            "job_title": row.get("job_title", "Vaga"),
+                            "job_url": row.get("job_url", ""),
+                            "language": row.get("language", "pt"),
+                            "technologies": row.get("technologies") or [],
+                            "date": row.get("created_at", datetime.now().isoformat()),
+                            "has_cover_letter": row.get("has_cover_letter", bool(row.get("cover_letter_md"))),
+                            "filepath": f"supabase:{row_id}",
+                            "filename": f"supabase_{row_id}.md",
+                            "diagnostic": row.get("diagnostic") or {},
+                            "supabase_id": row_id,
+                            "user_id": str(row.get("user_id")) if row.get("user_id") else None
+                        }
+                        resumes_map[f"supabase:{row_id}"] = item
+            elif user_id is None:
+                # Chamadas internas de testes/scripts sem filtro
+                query = supabase_client.table("applications").select("*").order("created_at", desc=True)
+                res = query.execute()
+                if res.data:
+                    for row in res.data:
+                        row_id = str(row.get("id"))
+                        known_supabase_ids.add(row_id)
+                        item = {
+                            "job_title": row.get("job_title", "Vaga"),
+                            "job_url": row.get("job_url", ""),
+                            "language": row.get("language", "pt"),
+                            "technologies": row.get("technologies") or [],
+                            "date": row.get("created_at", datetime.now().isoformat()),
+                            "has_cover_letter": row.get("has_cover_letter", bool(row.get("cover_letter_md"))),
+                            "filepath": f"supabase:{row_id}",
+                            "filename": f"supabase_{row_id}.md",
+                            "diagnostic": row.get("diagnostic") or {},
+                            "supabase_id": row_id,
+                            "user_id": str(row.get("user_id")) if row.get("user_id") else None
+                        }
+                        resumes_map[f"supabase:{row_id}"] = item
         except Exception as e:
             print(f"Erro ao listar do Supabase (utilizando fallback local): {e}")
 
