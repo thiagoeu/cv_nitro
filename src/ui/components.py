@@ -97,10 +97,45 @@ _CSS = f"""
         color: #0F172A !important;
     }}
 
+    /* Previne barra de rolagem horizontal com elementos full-width */
+    [data-testid="stAppViewContainer"],
+    .stApp,
+    section[data-testid="stMain"] {{
+        overflow-x: hidden !important;
+    }}
+
     /* Container principal da aplicação com espaçamento consistente */
     [data-testid="stMainBlockContainer"] {{
         max-width: 1240px;
         padding: 4.8rem 2rem 3rem;
+    }}
+
+    /* Rodapé global: ocupa 100% da largura da tela, exatamente como o topo */
+    .app-global-footer-wrapper {{
+        width: 100vw !important;
+        position: relative !important;
+        left: 50% !important;
+        right: 50% !important;
+        margin-left: -50vw !important;
+        margin-right: -50vw !important;
+        margin-top: 5rem !important;
+        margin-bottom: -3rem !important;
+        background-color: #FFFFFF !important;
+        border-top: 1px solid #CBD5E1 !important;
+        box-shadow: 0 -1px 3px 0 rgba(15, 23, 42, 0.04) !important;
+        box-sizing: border-box !important;
+    }}
+
+    .app-global-footer-content {{
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 2.2rem 2rem 1.8rem 2rem;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1.5rem;
+        box-sizing: border-box;
     }}
 
     /* Títulos em Azul Noturno com peso forte */
@@ -269,26 +304,13 @@ def application_card(r: dict, key: str):
 def render_footer():
     """
     Rodapé institucional global padronizado da aplicação.
-    Exibe dados do desenvolvedor (Thiago Araújo), links (GitHub, E-mail),
-    direitos de licença MIT e menção à disciplina de Sistemas Multi-Agentes (SMA).
+    Ocupa 100% da largura da tela (full-width), idêntico à barra superior,
+    com conteúdo centralizado e alinhado aos limites da página.
     """
     st.markdown(
         f"""
-        <div class="app-global-footer" style="
-            margin-top: 4rem;
-            padding: 2rem 0 1.5rem 0;
-            border-top: 1px solid {THEME_TOKENS['border']};
-            color: {THEME_TOKENS['text_secondary']};
-            font-size: 0.88rem;
-            line-height: 1.6;
-        ">
-            <div style="
-                display: flex;
-                flex-wrap: wrap;
-                justify-content: space-between;
-                align-items: center;
-                gap: 1.25rem;
-            ">
+        <div class="app-global-footer-wrapper app-global-footer">
+            <div class="app-global-footer-content">
                 <div>
                     <div style="font-weight: 700; color: {THEME_TOKENS['text_primary']}; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;">
                         🎯 <span>GitMatch · CV Nitro</span>

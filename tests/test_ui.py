@@ -74,7 +74,8 @@ def test_render_footer():
         assert "github.com/thiagoeu" in footer_html
         assert "Sistemas Multi-Agentes (SMA)" in footer_html
         assert "Licença MIT" in footer_html
-        assert 'class="app-global-footer"' in footer_html
+        assert "app-global-footer" in footer_html
+        assert "app-global-footer-wrapper" in footer_html
 
 def test_landing_page_cta_interactions():
     from src.ui.landing_view import render_landing_view
