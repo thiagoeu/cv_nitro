@@ -8,3 +8,4 @@ python-dotenv
 pypdf
 python-docx
 tabulate
+supabase

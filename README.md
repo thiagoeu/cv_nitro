@@ -140,26 +140,54 @@ Edite o arquivo `.env` com suas credenciais:
 
 ```env
 GEMINI_API_KEY=sua_chave_do_google_gemini_aqui
+GEMINI_MODEL=gemini-2.0-flash-lite
 GITHUB_TOKEN=seu_github_personal_access_token_aqui
+
+# (Opcional) Persistência em nuvem para Deploy:
+SUPABASE_URL=https://seu-projeto.supabase.co
+SUPABASE_KEY=sua-chave-anon-aqui
 ```
 
-> **Nota:** A variável `GITHUB_TOKEN` é opcional, porém recomendada para contornar o rate limit de 60 requisições/hora para requisições anônimas.
+---
 
-### 5. Iniciar a Aplicação
+## ☁️ Persistência em Nuvem com Supabase & Deploy
 
-Inicie a interface web com o Streamlit:
+O GitMatch possui uma camada de armazenamento híbrida:
+- **Modo Local (Padrão):** Grava os currículos e diagnósticos em arquivos Markdown na pasta `history/`.
+- **Modo Nuvem (Supabase):** Quando `SUPABASE_URL` e `SUPABASE_KEY` estão configuradas, as candidaturas são armazenadas diretamente em um banco PostgreSQL na nuvem.
 
-```bash
-streamlit run app.py
-```
+### Configuração do Supabase:
+1. Crie um projeto gratuito em [supabase.com](https://supabase.com).
+2. Abra o **SQL Editor** do projeto e execute o conteúdo do arquivo [`supabase_schema.sql`](supabase_schema.sql).
+3. Obtenha a URL do projeto e a chave anônima pública (*anon key*) em **Project Settings > API**.
 
-Acesse `http://localhost:8501` no seu navegador.
+### Deploy no Streamlit Community Cloud:
+1. Suba o repositório para o GitHub.
+2. Acesse [share.streamlit.io](https://share.streamlit.io) e conecte seu repositório apontando para `app.py`.
+3. Em **App Settings > Secrets**, adicione as variáveis:
+   ```toml
+   GEMINI_API_KEY = "sua_chave"
+   GEMINI_MODEL = "gemini-2.0-flash-lite"
+   GITHUB_TOKEN = "seu_token"
+   SUPABASE_URL = "https://seu-projeto.supabase.co"
+   SUPABASE_KEY = "sua_chave_anon"
+   ```
+4. O app será publicado e persistirá todos os dados mesmo quando a máquina reinicializar.
+
+---
+
+## ⚡ Economia de Tokens e Modos Leves de IA
+
+Para quem utiliza cotas gratuitas ou planos com limites de requisição (*Rate Limit 429*):
+1. **Modo Econômico de Tokens:** No assistente de otimização, desmarque a *Auditoria Rígida de Qualidade* para validação instantânea sem consumir chamadas secundárias de LLM.
+2. **Geração Modular de Carta:** Se você só precisa do currículo, desmarque a geração da *Cover Letter*, reduzindo em até 40% os tokens consumidos.
+3. **Modelo Leve:** Utilize `GEMINI_MODEL=gemini-2.0-flash-lite` no seu `.env` para geração ultrarrápida com custo mínimo de tokens.
 
 ---
 
 ## 🧪 Executando os Testes
 
-Para rodar os testes unitários e de integração com `pytest`:
+Para rodar a suíte completa de testes com `pytest`:
 
 ```bash
 pytest
@@ -176,3 +204,4 @@ pytest
 ## 📄 Licença
 
 Este projeto é desenvolvido para fins acadêmicos como parte do curso de **Sistemas Multi-Agentes**.
+
