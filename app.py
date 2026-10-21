@@ -3,7 +3,7 @@ import streamlit as st
 from src.core import history_manager, auth_manager
 from src.agents.graph import build_graph
 from src.ui.navbar import render_navbar, set_page
-from src.ui.components import apply_theme
+from src.ui.components import apply_theme, render_footer
 from src.ui.dashboard_view import render_dashboard_view
 from src.ui.wizard_view import render_wizard_view
 from src.ui.applications_view import render_applications_view, render_applications_list as ui_render_apps_list
@@ -103,6 +103,7 @@ def main():
 
     render_sidebar(resumes)
     page.run()
+    render_footer()
 
 if __name__ == "__main__":
     main()

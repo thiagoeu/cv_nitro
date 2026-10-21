@@ -125,7 +125,7 @@ def render_landing_view():
     # 3. Como Funciona (3 Passos)
     st.markdown(
         f"""
-        <div style="background-color: {THEME_TOKENS['bg_surface']}; border: 1px solid {THEME_TOKENS['border']}; border-radius: {THEME_TOKENS['radius']}; padding: 2.2rem 1.8rem; margin-bottom: 3.5rem;">
+        <div style="background-color: {THEME_TOKENS['bg_surface']}; border: 1px solid {THEME_TOKENS['border']}; border-radius: {THEME_TOKENS['radius']}; padding: 2.2rem 1.8rem; margin-bottom: 1.5rem;">
             <div style="text-align: center; margin-bottom: 2rem;">
                 <span style="color: {THEME_TOKENS['accent_cyan']}; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.85rem;">Fluxo Descomplicado</span>
                 <h2 style="color: {THEME_TOKENS['text_primary']}; font-size: 1.8rem; font-weight: 700; margin-top: 0.3rem;">Como o CV-Nitro funciona</h2>
@@ -157,27 +157,3 @@ def render_landing_view():
         """,
         unsafe_allow_html=True
     )
-
-    # 4. Banner Final de Fechamento / Conversão
-    st.markdown(
-        f"""
-        <div style="text-align: center; padding: 2rem 1.5rem; background-color: {THEME_TOKENS['text_primary']}; border-radius: {THEME_TOKENS['radius']}; color: #FFFFFF; margin-bottom: 2rem;">
-            <h2 style="color: #FFFFFF; font-size: 1.8rem; font-weight: 800; margin-bottom: 0.75rem;">Pronto para conquistar sua próxima vaga tech?</h2>
-            <p style="color: #94A3B8; font-size: 1.05rem; max-width: 600px; margin: 0 auto 1.5rem auto;">
-                Junte-se a desenvolvedores e profissionais de tecnologia que aumentaram suas chances de entrevista com o CV-Nitro.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    _, bot_col_1, bot_col_2, _ = st.columns([1.5, 2.2, 2.2, 1.5])
-    with bot_col_1:
-        if st.button("Criar Conta e Começar", type="primary", key="landing_btn_bottom_signup", use_container_width=True):
-            set_page("signup")
-            st.rerun()
-
-    with bot_col_2:
-        if st.button("Acessar Minha Conta", type="secondary", key="landing_btn_bottom_login", use_container_width=True):
-            set_page("login")
-            st.rerun()
