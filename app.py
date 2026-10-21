@@ -74,13 +74,29 @@ def clear_history_cache():
 
 def render_sidebar(resumes: list = None):
     """Renderiza a barra lateral dedicada exclusivamente ao Acesso Rápido aos currículos."""
-    if resumes is None:
-        uid = st.session_state.user_session.get("user_id", "guest_local") if "user_session" in st.session_state else "guest_local"
-        resumes = get_cached_resumes(uid)
+    session = st.session_state.get("user_session", auth_manager.create_guest_session())
+    is_guest = session.get("is_guest", True)
 
     st.sidebar.markdown("### ⚡ Acesso Rápido")
+
+    if is_guest:
+        st.sidebar.info("🔒 **Acesso Restrito**\n\nFaça login para salvar seus currículos e acessar seu histórico recente.")
+        col_sb1, col_sb2 = st.sidebar.columns(2)
+        with col_sb1:
+            if st.sidebar.button("🔑 Entrar", key="sb_btn_login", use_container_width=True):
+                set_page("login")
+                st.rerun()
+        with col_sb2:
+            if st.sidebar.button("✨ Cadastrar", key="sb_btn_signup", use_container_width=True):
+                set_page("signup")
+                st.rerun()
+        return
+
     st.sidebar.caption("🕒 Mais recentes primeiro:")
-    
+    if resumes is None:
+        uid = session.get("user_id", "guest_local")
+        resumes = get_cached_resumes(uid)
+
     if not resumes:
         st.sidebar.caption("Nenhuma candidatura recente.")
         return
