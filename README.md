@@ -1,13 +1,16 @@
 # 🎯 GitMatch - CV Nitro: Otimizador Inteligente de Currículos com Base em Portfólio GitHub, ATS e Persistência em Nuvem
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![LangGraph](https://img.shields.io/badge/Orquestra%C3%A7%C3%A3o-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
 [![Google Gemini](https://img.shields.io/badge/LLM-Google%20Gemini%203.x%20%2F%20Flash-8E75C2.svg)](https://ai.google.dev/)
 [![Supabase](https://img.shields.io/badge/Banco%20de%20Dados-Supabase%20%28PostgreSQL%29-3ECF8E.svg)](https://supabase.com/)
-[![Testes](https://img.shields.io/badge/Testes-31%20Passando%20%28Pytest%29-brightgreen.svg)](https://docs.pytest.org/)
+[![Testes](https://img.shields.io/badge/Testes-62%20Passando%20%28Pytest%29-brightgreen.svg)](https://docs.pytest.org/)
 [![Licença](https://img.shields.io/badge/Licen%C3%A7a-MIT%20%2F%20Acad%C3%AAmica-lightgrey.svg)](LICENSE)
 
+> 🚀 **Aplicação em Produção (Deploy Ativo):** [https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/](https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/)
+>
 > Projeto prático avançado desenvolvido para a disciplina de **Sistemas Multi-Agentes (SMA)**.
 
 O **GitMatch (CV Nitro)** é um ecossistema multi-agente inteligente projetado para transformar currículos técnicos comuns em candidaturas executivas de alto impacto, totalmente alinhadas às exigências de vagas reais de tecnologia e comprovadas por projetos reais públicos do candidato no **GitHub**. 
@@ -227,6 +230,8 @@ SUPABASE_KEY = "sua_chave_anonima_publica"
 ```
 
 5. Clique em **Deploy**. Sua aplicação estará online, acessível publicamente e persistindo dados no banco em nuvem!
+
+> 🌐 **URL de Produção Ativa:** [https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/](https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/)
 
 ---
 

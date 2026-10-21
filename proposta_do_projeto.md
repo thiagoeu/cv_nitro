@@ -8,7 +8,8 @@
 ---
 
 ### Título Provisório do Projeto
-* **GitMatch:** Otimizador Inteligente de Currículos com Base em Portfólio GitHub
+* **GitMatch (CV Nitro):** Otimizador Inteligente de Currículos com Base em Portfólio GitHub, ATS e Persistência em Nuvem
+* **Aplicação em Produção (Deploy Ativo):** [https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/](https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/)
 
 ---
 
