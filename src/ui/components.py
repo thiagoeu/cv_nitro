@@ -265,3 +265,72 @@ def application_card(r: dict, key: str):
             st.session_state.viewing_history = r["filepath"]
             set_page("applications", clear_transient=False)
             st.rerun()
+
+def render_footer():
+    """
+    Rodapé institucional global padronizado da aplicação.
+    Exibe dados do desenvolvedor (Thiago Araújo), links (GitHub, E-mail),
+    direitos de licença MIT e menção à disciplina de Sistemas Multi-Agentes (SMA).
+    """
+    st.markdown(
+        f"""
+        <div class="app-global-footer" style="
+            margin-top: 4rem;
+            padding: 2rem 0 1.5rem 0;
+            border-top: 1px solid {THEME_TOKENS['border']};
+            color: {THEME_TOKENS['text_secondary']};
+            font-size: 0.88rem;
+            line-height: 1.6;
+        ">
+            <div style="
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-between;
+                align-items: center;
+                gap: 1.25rem;
+            ">
+                <div>
+                    <div style="font-weight: 700; color: {THEME_TOKENS['text_primary']}; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;">
+                        🎯 <span>GitMatch · CV Nitro</span>
+                    </div>
+                    <div style="font-size: 0.82rem; color: {THEME_TOKENS['text_secondary']}; margin-top: 2px;">
+                        Otimizador Inteligente de Currículos com IA Multi-Agente & ATS
+                    </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem;">
+                    <div>
+                        Desenvolvido por <strong>Thiago Araújo</strong>
+                    </div>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <a href="https://github.com/thiagoeu" target="_blank" rel="noopener noreferrer" style="
+                            color: {THEME_TOKENS['accent_cyan']};
+                            text-decoration: none;
+                            font-weight: 600;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 4px;
+                        ">
+                            GitHub @thiagoeu
+                        </a>
+                        <span style="color: {THEME_TOKENS['border']};">·</span>
+                        <a href="mailto:araujo.thiago1051@gmail.com" style="
+                            color: {THEME_TOKENS['accent_cyan']};
+                            text-decoration: none;
+                            font-weight: 600;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 4px;
+                        ">
+                            araujo.thiago1051@gmail.com
+                        </a>
+                    </div>
+                </div>
+                <div style="font-size: 0.8rem; color: #64748B;">
+                    Licença MIT · Projeto acadêmico para Sistemas Multi-Agentes (SMA)
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+

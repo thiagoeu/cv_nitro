@@ -58,7 +58,23 @@ def test_render_landing_view():
         all_markdown_texts = " ".join([call[0][0] for call in mock_markdown.call_args_list if call[0]])
         assert "Com o CV-Nitro, você se destaca em qualquer processo seletivo tech" in all_markdown_texts
         assert "Análise Profunda da Vaga" in all_markdown_texts
+        # Garantir que a caixa escura e botões de baixo foram removidos
+        assert "Pronto para conquistar sua próxima vaga tech?" not in all_markdown_texts
         assert mock_button.called
+
+def test_render_footer():
+    from src.ui.components import render_footer
+
+    with patch("streamlit.markdown") as mock_markdown:
+        render_footer()
+        assert mock_markdown.called
+        footer_html = mock_markdown.call_args[0][0]
+        assert "Thiago Araújo" in footer_html
+        assert "araujo.thiago1051@gmail.com" in footer_html
+        assert "github.com/thiagoeu" in footer_html
+        assert "Sistemas Multi-Agentes (SMA)" in footer_html
+        assert "Licença MIT" in footer_html
+        assert 'class="app-global-footer"' in footer_html
 
 def test_landing_page_cta_interactions():
     from src.ui.landing_view import render_landing_view
