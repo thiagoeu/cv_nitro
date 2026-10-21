@@ -16,6 +16,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Injeção de CSS Global: Remove header, deploy, menu nativo e setinhas de colapso
+st.markdown("""
+<style>
+    /* Oculta completamente o header nativo do Streamlit, deploy, menu e a setinha keyboard_double_arrow_right */
+    header[data-testid="stHeader"],
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="stSidebarCollapseButton"],
+    .stAppDeployButton,
+    [data-testid="stAppDeployButton"],
+    .stDeployButton,
+    [data-testid="stDecoration"],
+    #MainMenu,
+    footer {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0px !important;
+        width: 0px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+
+    /* Remove espaçamentos vazios deixados pelo header e posiciona a navbar no topo */
+    .block-container {
+        padding-top: 1.5rem !important;
+        padding-bottom: 2.5rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # 2. Compilação do Grafo Multi-Agente
 graph = build_graph()
 
