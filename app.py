@@ -1,51 +1,25 @@
+import os
 import streamlit as st
 from src.core import history_manager, auth_manager
 from src.agents.graph import build_graph
-from src.ui.navbar import render_navbar, set_page, get_current_page, clear_transient_state
+from src.ui.navbar import render_navbar, set_page
+from src.ui.components import apply_theme
 from src.ui.dashboard_view import render_dashboard_view
 from src.ui.wizard_view import render_wizard_view
 from src.ui.applications_view import render_applications_view, render_applications_list as ui_render_apps_list
+from src.ui.profile_view import render_profile_view
 from src.ui.settings_view import render_settings_view
-from src.ui.auth_views import render_login_view, render_signup_view
+from src.ui.auth_views import render_login_view, render_signup_view, render_logout_view
+
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.svg")
 
 # 1. Configuração da Página
 st.set_page_config(
     page_title="GitMatch - CV Nitro Optimizer",
     page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
-
-# Injeção de CSS Global: Remove header, deploy, menu nativo e setinhas de colapso
-st.markdown("""
-<style>
-    /* Oculta completamente o header nativo do Streamlit, deploy, menu e a setinha keyboard_double_arrow_right */
-    header[data-testid="stHeader"],
-    [data-testid="stSidebarCollapsedControl"],
-    [data-testid="stSidebarCollapseButton"],
-    .stAppDeployButton,
-    [data-testid="stAppDeployButton"],
-    .stDeployButton,
-    [data-testid="stDecoration"],
-    #MainMenu,
-    footer {
-        display: none !important;
-        visibility: hidden !important;
-        height: 0px !important;
-        width: 0px !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-    }
-
-    /* Remove espaçamentos vazios deixados pelo header e posiciona a navbar no topo */
-    .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 2.5rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 # 2. Compilação do Grafo Multi-Agente
 graph = build_graph()
@@ -73,41 +47,24 @@ def clear_history_cache():
     get_cached_application.clear()
 
 def render_sidebar(resumes: list = None):
-    """Renderiza a barra lateral dedicada exclusivamente ao Acesso Rápido aos currículos."""
+    """Barra lateral de acesso rápido às candidaturas recentes (só para usuários conectados)."""
     session = st.session_state.get("user_session", auth_manager.create_guest_session())
-    is_guest = session.get("is_guest", True)
-
-    st.sidebar.markdown("### ⚡ Acesso Rápido")
-
-    if is_guest:
-        st.sidebar.info("🔒 **Acesso Restrito**\n\nFaça login para salvar seus currículos e acessar seu histórico recente.")
-        col_sb1, col_sb2 = st.sidebar.columns(2)
-        with col_sb1:
-            if st.sidebar.button("🔑 Entrar", key="sb_btn_login", use_container_width=True):
-                set_page("login")
-                st.rerun()
-        with col_sb2:
-            if st.sidebar.button("✨ Cadastrar", key="sb_btn_signup", use_container_width=True):
-                set_page("signup")
-                st.rerun()
+    if session.get("is_guest", True):
         return
 
-    st.sidebar.caption("🕒 Mais recentes primeiro:")
+    st.sidebar.markdown("#### :material/history: Recentes")
     if resumes is None:
-        uid = session.get("user_id", "guest_local")
-        resumes = get_cached_resumes(uid)
+        resumes = get_cached_resumes(session.get("user_id", "guest_local"))
 
     if not resumes:
-        st.sidebar.caption("Nenhuma candidatura recente.")
+        st.sidebar.caption("Nenhuma candidatura ainda.")
         return
 
     for idx, r in enumerate(resumes[:8]):
         date_str = history_manager.format_display_date(r.get("date", ""))
-        title = r.get("job_title", "Vaga")
         lang = (r.get("language") or "pt").upper()
-        btn_label = f"[{lang}] {title[:14]}... ({date_str})"
-        
-        if st.sidebar.button(btn_label, key=f"sb_quick_{idx}", use_container_width=True):
+        label = f"**{(r.get('job_title') or 'Vaga').strip()}**  \n:gray[{lang} · {date_str}]"
+        if st.sidebar.button(label, key=f"sb_quick_{idx}", type="tertiary", width="stretch"):
             st.session_state.viewing_history = r["filepath"]
             set_page("applications", clear_transient=False)
             st.rerun()
@@ -123,30 +80,26 @@ def render_applications_list(resumes: list):
     ui_render_apps_list(resumes)
 
 def main():
+    apply_theme()
+    st.logo(LOGO_PATH, size="large")
+
     current_uid = st.session_state.user_session.get("user_id", "guest_local")
     resumes = get_cached_resumes(current_uid)
-    
-    # Barra lateral focada em Acesso Rápido
+
+    # Navbar superior com os links das páginas e o menu de conta
+    page = render_navbar({
+        "dashboard": lambda: render_dashboard_view(resumes),
+        "wizard": lambda: render_wizard_view(graph, clear_history_cache),
+        "applications": lambda: render_applications_view(resumes, get_cached_application, clear_history_cache, graph),
+        "profile": render_profile_view,
+        "settings": lambda: render_settings_view(clear_history_cache),
+        "login": lambda: render_login_view(on_success_callback=clear_history_cache),
+        "signup": lambda: render_signup_view(on_success_callback=clear_history_cache),
+        "logout": lambda: render_logout_view(on_success_callback=clear_history_cache),
+    })
+
     render_sidebar(resumes)
-    
-    # Barra Superior Moderna no padrão SaaS
-    page = render_navbar()
-    
-    # Roteador Desacoplado de Views
-    if page == "dashboard":
-        render_dashboard_view(resumes)
-    elif page == "wizard":
-        render_wizard_view(graph, clear_history_cache)
-    elif page == "applications":
-        render_applications_view(resumes, get_cached_application, clear_history_cache, graph)
-    elif page == "settings":
-        render_settings_view(clear_history_cache)
-    elif page == "login":
-        render_login_view(on_success_callback=clear_history_cache)
-    elif page == "signup":
-        render_signup_view(on_success_callback=clear_history_cache)
-    else:
-        render_dashboard_view(resumes)
+    page.run()
 
 if __name__ == "__main__":
     main()
