@@ -1,8 +1,13 @@
 import os
+import json
+import hmac
+import hashlib
+import base64
 from typing import Dict, Any, Optional
 from src.core import history_manager
 
 GUEST_USER_ID = "guest_local"
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "cv_nitro_session_secret_signature_key_2026")
 
 def create_guest_session() -> Dict[str, Any]:
     """Cria uma sessão de convidado/visitante para uso anônimo e local."""
@@ -14,6 +19,49 @@ def create_guest_session() -> Dict[str, Any]:
         "is_guest": True,
         "access_token": None
     }
+
+def create_session_token(user: Dict[str, Any]) -> str:
+    """
+    Gera um token seguro assinado por HMAC-SHA256 para persistência no navegador
+    (localStorage e URL query params), permitindo sobrevivência ao recarregar a página (F5).
+    """
+    payload = {
+        "user_id": user.get("user_id"),
+        "email": user.get("email"),
+        "display_name": user.get("display_name"),
+        "access_token": user.get("access_token")
+    }
+    raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    sig = hmac.new(AUTH_SECRET_KEY.encode('utf-8'), raw, hashlib.sha256).hexdigest()
+    raw_b64 = base64.urlsafe_b64encode(raw).decode('utf-8')
+    return f"{raw_b64}.{sig}"
+
+def restore_session_from_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Valida a assinatura do token e restaura a sessão autenticada do usuário.
+    Retorna None se o token for inválido, corrompido ou adulterado.
+    """
+    if not token or "." not in token:
+        return None
+    try:
+        raw_b64, sig = token.split(".", 1)
+        raw = base64.urlsafe_b64decode(raw_b64.encode('utf-8'))
+        expected_sig = hmac.new(AUTH_SECRET_KEY.encode('utf-8'), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        payload = json.loads(raw.decode('utf-8'))
+        if not payload.get("user_id") or payload.get("user_id") == GUEST_USER_ID:
+            return None
+        return {
+            "user_id": payload.get("user_id"),
+            "email": payload.get("email", ""),
+            "display_name": payload.get("display_name", ""),
+            "is_authenticated": True,
+            "is_guest": False,
+            "access_token": payload.get("access_token")
+        }
+    except Exception:
+        return None
 
 def sign_in_with_password(email: str, password: str) -> Dict[str, Any]:
     """

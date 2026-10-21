@@ -1,3 +1,4 @@
+import streamlit as st
 from src.ui.diagnostic_view import render_ats_diagnostic_panel
 from unittest.mock import patch, MagicMock
 
@@ -182,11 +183,37 @@ def test_navbar_authenticated_user_navigation():
 def test_auth_logout_redirects_to_landing():
     from src.ui.auth_views import render_logout_view
 
+    st.query_params.clear()
+    st.query_params["auth_token"] = "some-token"
     with patch("src.ui.auth_views.auth_manager.sign_out") as mock_sign_out, \
          patch("src.ui.auth_views.set_page") as mock_set_page, \
          patch("streamlit.toast"), \
          patch("streamlit.rerun"):
         render_logout_view()
         assert mock_sign_out.called
+        assert st.session_state.user_session["is_guest"] is True
+        assert st.query_params.get("action") == "logout"
+        assert "auth_token" not in st.query_params
         mock_set_page.assert_called_with("landing")
+
+def test_render_storage_sync_authenticated():
+    from src.ui.components import render_storage_sync
+
+    with patch("streamlit.components.v1.html") as mock_html:
+        render_storage_sync(token="valid.test.token", is_logout=False)
+        assert mock_html.called
+        script_arg = mock_html.call_args[0][0]
+        assert "valid.test.token" in script_arg
+        assert "cv_nitro_auth_token" in script_arg
+        assert "isLogout = false" in script_arg
+
+def test_render_storage_sync_logout():
+    from src.ui.components import render_storage_sync
+
+    with patch("streamlit.components.v1.html") as mock_html:
+        render_storage_sync(token=None, is_logout=True)
+        assert mock_html.called
+        script_arg = mock_html.call_args[0][0]
+        assert "removeItem(storageKey)" in script_arg
+        assert "isLogout = true" in script_arg
 

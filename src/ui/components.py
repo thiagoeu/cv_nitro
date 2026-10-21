@@ -1,4 +1,5 @@
 import streamlit as st
+from typing import Optional
 from src.core import history_manager
 from src.core.document_parser import extract_text_from_file
 from src.ui.navbar import set_page
@@ -136,6 +137,17 @@ _CSS = f"""
         align-items: center;
         gap: 1.5rem;
         box-sizing: border-box;
+    }}
+
+    /* Oculta iframe de sincronização de storage para evitar layout shift */
+    iframe[height="0"] {{
+        display: none !important;
+        position: absolute !important;
+        height: 0 !important;
+        width: 0 !important;
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
     }}
 
     /* Títulos em Azul Noturno com peso forte */
@@ -355,4 +367,67 @@ def render_footer():
         """,
         unsafe_allow_html=True
     )
+
+def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
+    """
+    Sincroniza a credencial de sessão com o localStorage e cookie do navegador via iframe.
+    - Se autenticado: grava o token assinado no localStorage e cookie.
+    - Se logout: remove o token do localStorage e cookie.
+    - Se visitante sem parâmetros: detecta se existe token salvo no localStorage/cookie e restaura
+      a sessão automaticamente via URL.
+    """
+    import streamlit.components.v1 as components
+    clean_token = token or ""
+    logout_flag = "true" if is_logout else "false"
+
+    script = f"""
+    <script>
+    (function() {{
+        try {{
+            var storageKey = "cv_nitro_auth_token";
+            var win = window.parent || window;
+            var activeToken = "{clean_token}";
+            var isLogout = {logout_flag};
+
+            if (isLogout) {{
+                try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
+                try {{ window.localStorage.removeItem(storageKey); }} catch(e) {{}}
+                try {{ win.document.cookie = storageKey + "=; path=/; max-age=0"; }} catch(e) {{}}
+                try {{ document.cookie = storageKey + "=; path=/; max-age=0"; }} catch(e) {{}}
+            }} else if (activeToken && activeToken.length > 10) {{
+                try {{ win.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
+                try {{ window.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
+                try {{ win.document.cookie = storageKey + "=" + encodeURIComponent(activeToken) + "; path=/; max-age=2592000; SameSite=Lax"; }} catch(e) {{}}
+            }} else {{
+                var savedToken = null;
+                try {{ savedToken = win.localStorage.getItem(storageKey); }} catch(e) {{}}
+                if (!savedToken) {{
+                    try {{ savedToken = window.localStorage.getItem(storageKey); }} catch(e) {{}}
+                }}
+                if (!savedToken) {{
+                    try {{
+                        var match = (win.document.cookie || document.cookie).match(new RegExp('(^| )' + storageKey + '=([^;]+)'));
+                        if (match) savedToken = decodeURIComponent(match[2]);
+                    }} catch(e) {{}}
+                }}
+                var loc = win.location;
+                if (savedToken && savedToken.length > 10) {{
+                    var hasTokenParam = loc.search && loc.search.indexOf("auth_token=") !== -1;
+                    var isLogoutParam = loc.search && loc.search.indexOf("action=logout") !== -1;
+                    if (!hasTokenParam && !isLogoutParam) {{
+                        var joinChar = loc.search ? "&" : "?";
+                        loc.href = loc.pathname + loc.search + joinChar + "auth_token=" + encodeURIComponent(savedToken);
+                    }}
+                }}
+            }}
+        }} catch(e) {{
+            // Silencioso em caso de restrições de sandbox
+        }}
+    }})();
+    </script>
+    """
+    try:
+        components.html(script, height=0)
+    except Exception:
+        pass
 

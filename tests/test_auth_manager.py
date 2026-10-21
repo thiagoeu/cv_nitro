@@ -64,3 +64,45 @@ def test_sign_out_executes():
         ok = auth_manager.sign_out()
         assert ok is True
         assert mock_client.auth.sign_out.called
+
+def test_session_token_create_and_restore_success():
+    user = {
+        "user_id": "usr-test-1234",
+        "email": "thiago@exemplo.com",
+        "display_name": "Thiago Araujo",
+        "access_token": "token-xyz"
+    }
+    token = auth_manager.create_session_token(user)
+    assert isinstance(token, str)
+    assert "." in token
+
+    restored = auth_manager.restore_session_from_token(token)
+    assert restored is not None
+    assert restored["user_id"] == "usr-test-1234"
+    assert restored["email"] == "thiago@exemplo.com"
+    assert restored["display_name"] == "Thiago Araujo"
+    assert restored["is_authenticated"] is True
+    assert restored["is_guest"] is False
+    assert restored["access_token"] == "token-xyz"
+
+def test_session_token_tampered_rejected():
+    user = {
+        "user_id": "usr-test-5678",
+        "email": "hacker@teste.com",
+        "display_name": "Hacker",
+        "access_token": "abc"
+    }
+    token = auth_manager.create_session_token(user)
+    raw, sig = token.split(".", 1)
+    tampered_sig = "a" * len(sig)
+    tampered_token = f"{raw}.{tampered_sig}"
+    assert auth_manager.restore_session_from_token(tampered_token) is None
+
+def test_session_token_empty_or_guest_rejected():
+    assert auth_manager.restore_session_from_token("") is None
+    assert auth_manager.restore_session_from_token(None) is None
+    assert auth_manager.restore_session_from_token("invalid_token_without_dot") is None
+    
+    guest_user = {"user_id": "guest_local", "email": "visitante@local"}
+    guest_token = auth_manager.create_session_token(guest_user)
+    assert auth_manager.restore_session_from_token(guest_token) is None

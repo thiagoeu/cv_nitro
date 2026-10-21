@@ -40,7 +40,9 @@ def render_login_view(on_success_callback: Optional[Callable] = None):
                 else:
                     res = auth_manager.sign_in_with_password(email.strip(), password)
                     if res["success"]:
+                        st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
+                        st.query_params["auth_token"] = auth_manager.create_session_token(res["user"])
                         if on_success_callback:
                             on_success_callback()
                         st.toast(f"Bem-vindo(a) de volta, {res['user']['display_name']}!")
@@ -94,7 +96,9 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
                 else:
                     res = auth_manager.sign_up(email.strip(), password, full_name=name.strip())
                     if res["success"]:
+                        st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
+                        st.query_params["auth_token"] = auth_manager.create_session_token(res["user"])
                         if on_success_callback:
                             on_success_callback()
                         st.toast(res.get("message", "Conta criada com sucesso!"))
@@ -114,6 +118,9 @@ def render_logout_view(on_success_callback: Optional[Callable] = None):
     """Página 'Sair' do menu de conta: encerra a sessão e volta para a landing page."""
     auth_manager.sign_out()
     st.session_state.user_session = auth_manager.create_guest_session()
+    st.session_state["logged_out"] = True
+    st.query_params.clear()
+    st.query_params["action"] = "logout"
     clear_transient_state()
     if on_success_callback:
         on_success_callback()
