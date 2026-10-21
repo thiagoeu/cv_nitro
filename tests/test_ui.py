@@ -41,3 +41,135 @@ def test_theme_tokens_and_apply_theme():
         css_injected = mock_markdown.call_args[0][0]
         assert "#CBD5E1" in css_injected
         assert "#10B981" in css_injected
+
+def test_render_landing_view():
+    from src.ui.landing_view import render_landing_view
+
+    def fake_columns(spec):
+        count = len(spec) if isinstance(spec, list) else spec
+        return [MagicMock() for _ in range(count)]
+
+    with patch("streamlit.markdown") as mock_markdown, \
+         patch("streamlit.columns", side_effect=fake_columns), \
+         patch("streamlit.button", return_value=False) as mock_button:
+        render_landing_view()
+        assert mock_markdown.called
+        # Verificar se os títulos e textos de impacto foram enviados para st.markdown
+        all_markdown_texts = " ".join([call[0][0] for call in mock_markdown.call_args_list if call[0]])
+        assert "Com o CV-Nitro, você se destaca em qualquer processo seletivo tech" in all_markdown_texts
+        assert "Análise Profunda da Vaga" in all_markdown_texts
+        assert mock_button.called
+
+def test_landing_page_cta_interactions():
+    from src.ui.landing_view import render_landing_view
+
+    def fake_columns(spec):
+        count = len(spec) if isinstance(spec, list) else spec
+        return [MagicMock() for _ in range(count)]
+
+    # Cenário: Usuário clica no botão de signup da hero
+    def button_signup_click(label, **kwargs):
+        return kwargs.get("key") == "landing_btn_signup"
+
+    with patch("streamlit.markdown"), \
+         patch("streamlit.columns", side_effect=fake_columns), \
+         patch("streamlit.button", side_effect=button_signup_click), \
+         patch("src.ui.landing_view.set_page") as mock_set_page, \
+         patch("streamlit.rerun") as mock_rerun:
+        render_landing_view()
+        mock_set_page.assert_called_with("signup")
+        assert mock_rerun.called
+
+def test_navbar_guest_route_protection_and_navigation():
+    import streamlit as st
+    from src.ui.navbar import render_navbar
+
+    st.session_state.clear()
+    st.session_state.user_session = {"is_guest": True, "user_id": "guest_local"}
+    st.session_state.current_page = "dashboard"  # Tentativa de acesso a rota privada
+
+    views = {
+        "landing": MagicMock(),
+        "dashboard": MagicMock(),
+        "wizard": MagicMock(),
+        "applications": MagicMock(),
+        "profile": MagicMock(),
+        "settings": MagicMock(),
+        "login": MagicMock(),
+        "signup": MagicMock(),
+        "logout": MagicMock(),
+    }
+
+    mock_page_instances = {}
+    def fake_page(func, **kwargs):
+        p = MagicMock()
+        p.title = kwargs.get("title")
+        p.url_path = kwargs.get("url_path")
+        return p
+
+    with patch("streamlit.Page", side_effect=fake_page), \
+         patch("streamlit.navigation") as mock_navigation:
+        mock_navigation.return_value = MagicMock()
+        render_navbar(views)
+        
+        # Rota privada deve ter sido interceptada e alterada para landing
+        assert st.session_state.current_page == "landing"
+        assert st.session_state.get("transient_info") is not None
+        
+        # st.navigation deve ter sido chamado apenas com seções públicas
+        nav_call_args = mock_navigation.call_args[0][0]
+        assert "" in nav_call_args
+        assert "Conta" in nav_call_args
+        # Deve ter 1 link no principal (landing) e 2 em conta (login e signup)
+        assert len(nav_call_args[""]) == 1
+        assert len(nav_call_args["Conta"]) == 2
+
+def test_navbar_authenticated_user_navigation():
+    import streamlit as st
+    from src.ui.navbar import render_navbar
+
+    st.session_state.clear()
+    st.session_state.user_session = {"is_guest": False, "user_id": "u-123", "display_name": "Dev Nitro"}
+    st.session_state.current_page = "dashboard"
+
+    views = {
+        "landing": MagicMock(),
+        "dashboard": MagicMock(),
+        "wizard": MagicMock(),
+        "applications": MagicMock(),
+        "profile": MagicMock(),
+        "settings": MagicMock(),
+        "login": MagicMock(),
+        "signup": MagicMock(),
+        "logout": MagicMock(),
+    }
+
+    def fake_page(func, **kwargs):
+        p = MagicMock()
+        p.title = kwargs.get("title")
+        return p
+
+    with patch("streamlit.Page", side_effect=fake_page), \
+         patch("streamlit.navigation") as mock_navigation:
+        mock_navigation.return_value = MagicMock()
+        render_navbar(views)
+
+        assert st.session_state.current_page == "dashboard"
+        nav_call_args = mock_navigation.call_args[0][0]
+        # Deve ter os 4 links principais
+        assert len(nav_call_args[""]) == 4
+        # E o menu de conta autenticada
+        account_section = [k for k in nav_call_args.keys() if "Dev Nitro" in k][0]
+        assert len(nav_call_args[account_section]) == 2  # settings e logout
+
+def test_auth_logout_redirects_to_landing():
+    from src.ui.auth_views import render_logout_view
+
+    with patch("src.ui.auth_views.auth_manager.sign_out") as mock_sign_out, \
+         patch("src.ui.auth_views.set_page") as mock_set_page, \
+         patch("streamlit.toast"), \
+         patch("streamlit.rerun"):
+        render_logout_view()
+        assert mock_sign_out.called
+        mock_set_page.assert_called_with("landing")
+

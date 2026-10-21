@@ -15,8 +15,9 @@ TRANSIENT_KEYS = [
     "last_error"
 ]
 
-# chave interna -> (título, ícone, caminho na URL)
+# Catálogo completo de páginas: chave interna -> (título, ícone, caminho na URL)
 PAGES = {
+    "landing": ("Início", ":material/home:", "inicio"),
     "dashboard": ("Dashboard", ":material/space_dashboard:", "dashboard"),
     "wizard": ("Otimizador", ":material/auto_awesome:", "otimizador"),
     "applications": ("Candidaturas", ":material/work_history:", "candidaturas"),
@@ -26,8 +27,21 @@ PAGES = {
     "settings": ("Sistema", ":material/settings:", "sistema"),
     "logout": ("Sair", ":material/logout:", "sair"),
 }
-MAIN_LINKS = ["dashboard", "wizard", "applications", "profile"]
-ACCOUNT_LINKS = ["login", "signup", "settings", "logout"]
+
+PUBLIC_PAGES = {"landing", "login", "signup"}
+PRIVATE_PAGES = {"dashboard", "wizard", "applications", "profile", "settings", "logout"}
+
+# Grupos de links para visitantes não autenticados
+GUEST_MAIN_LINKS = ["landing"]
+GUEST_ACCOUNT_LINKS = ["login", "signup"]
+
+# Grupos de links para usuários autenticados
+AUTH_MAIN_LINKS = ["dashboard", "wizard", "applications", "profile"]
+AUTH_ACCOUNT_LINKS = ["settings", "logout"]
+
+# Aliases de compatibilidade retroativa
+MAIN_LINKS = AUTH_MAIN_LINKS
+ACCOUNT_LINKS = AUTH_ACCOUNT_LINKS
 
 def clear_transient_state():
     """
@@ -52,47 +66,85 @@ def set_page(page_name: str, clear_transient: bool = True):
         del st.session_state["viewing_history"]
 
 def get_current_page() -> str:
-    """Retorna a página atualmente ativa (padrão: dashboard)."""
-    return st.session_state.get("current_page", "dashboard")
+    """Retorna a página atualmente ativa."""
+    if "current_page" in st.session_state:
+        return st.session_state.current_page
+    session = st.session_state.get("user_session")
+    if session and session.get("is_guest", True):
+        return "landing"
+    elif session and not session.get("is_guest", True):
+        return "dashboard"
+    return "dashboard"
 
 def render_navbar(views: Dict[str, Callable[[], None]]):
     """
-    Navbar superior nativa (st.navigation no topo): links das páginas principais
-    e um menu de conta em dropdown. Retorna a página atual; chame .run() nela.
+    Navbar superior nativa (st.navigation no topo):
+    - Se visitante (is_guest == True): exibe apenas 'Início' e menu 'Conta' com 'Entrar' e 'Criar conta'.
+      Protege todas as rotas privadas, redirecionando para 'landing'.
+    - Se autenticado (is_guest == False): exibe as páginas da aplicação ('Dashboard', 'Otimizador', etc.)
+      e menu de conta com perfil/configurações e logout.
     """
     session = st.session_state.get("user_session", auth_manager.create_guest_session())
     is_guest = session.get("is_guest", True)
-    # Todas as páginas ficam registradas; só a visibilidade muda com o login,
-    # assim a navegação nunca cai numa página "inexistente" ao entrar/sair.
-    hidden = {"logout"} if is_guest else {"login", "signup"}
+    default_key = "landing" if is_guest else "dashboard"
 
-    pages = {
-        key: st.Page(
-            views[key],
-            title=title,
-            icon=icon,
-            url_path=url_path,
-            default=(key == "dashboard"),
-            visibility="hidden" if key in hidden else "visible"
-        )
-        for key, (title, icon, url_path) in PAGES.items()
-    }
+    # Guarda de rotas: intercepta tentativas de acesso indevido
+    current_requested = st.session_state.get("current_page", default_key)
+    if is_guest and current_requested in PRIVATE_PAGES:
+        st.session_state["transient_info"] = "Acesso restrito. Faça login ou crie sua conta para acessar o sistema."
+        st.session_state.current_page = "landing"
+        st.session_state.pop("_nav_target", None)
+        default_key = "landing"
+    elif not is_guest and current_requested == "landing":
+        st.session_state.current_page = "dashboard"
+        st.session_state.pop("_nav_target", None)
+        default_key = "dashboard"
 
     if is_guest:
-        account_label = "Conta"
+        # Visitante: apenas Landing Page e ações de Login/Cadastro
+        allowed_keys = GUEST_MAIN_LINKS + GUEST_ACCOUNT_LINKS
+        pages = {
+            key: st.Page(
+                views[key],
+                title=title,
+                icon=icon,
+                url_path=url_path,
+                default=(key == default_key)
+            )
+            for key, (title, icon, url_path) in PAGES.items()
+            if key in allowed_keys and key in views
+        }
+        nav_sections = {
+            "": [pages[k] for k in GUEST_MAIN_LINKS if k in pages],
+            "Conta": [pages[k] for k in GUEST_ACCOUNT_LINKS if k in pages]
+        }
     else:
+        # Usuário autenticado: ferramentas da aplicação e menu de conta
+        allowed_keys = AUTH_MAIN_LINKS + AUTH_ACCOUNT_LINKS
+        pages = {
+            key: st.Page(
+                views[key],
+                title=title,
+                icon=icon,
+                url_path=url_path,
+                default=(key == default_key)
+            )
+            for key, (title, icon, url_path) in PAGES.items()
+            if key in allowed_keys and key in views
+        }
         name = session.get("display_name") or session.get("email") or "Minha conta"
         account_label = f":material/account_circle: {name[:20]}"
+        nav_sections = {
+            "": [pages[k] for k in AUTH_MAIN_LINKS if k in pages],
+            account_label: [pages[k] for k in AUTH_ACCOUNT_LINKS if k in pages]
+        }
 
-    current = st.navigation(
-        {"": [pages[k] for k in MAIN_LINKS], account_label: [pages[k] for k in ACCOUNT_LINKS]},
-        position="top"
-    )
+    current = st.navigation(nav_sections, position="top")
 
     # Navegação programática pendente (set_page + st.rerun em qualquer view)
     target = st.session_state.pop("_nav_target", None)
     if target in pages and pages[target] is not current:
         st.switch_page(pages[target])
 
-    st.session_state.current_page = next((k for k, p in pages.items() if p is current), "dashboard")
+    st.session_state.current_page = next((k for k, p in pages.items() if p is current), default_key)
     return current
