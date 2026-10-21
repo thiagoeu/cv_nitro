@@ -14,6 +14,8 @@ def test_navbar_page_navigation():
     # Navega para applications
     navbar.set_page("applications")
     assert navbar.get_current_page() == "applications"
+    # A troca efetiva fica pendente para o render_navbar() aplicar no próximo rerun
+    assert st.session_state["_nav_target"] == "applications"
 
 def test_navbar_clear_transient_state():
     st.session_state.clear()

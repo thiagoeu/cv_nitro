@@ -1,0 +1,27 @@
+[client]
+toolbarMode = "minimal"
+
+# Design system do GitMatch: toda cor, raio e fonte da interface vem daqui.
+# Primária (indigo) = ação principal/destaque; bordas e superfícies em tons de slate.
+[theme]
+base = "dark"
+primaryColor = "#6366f1"
+backgroundColor = "#0b1020"
+secondaryBackgroundColor = "#151c2f"
+textColor = "#e2e8f0"
+borderColor = "#263149"
+showWidgetBorder = true
+linkColor = "#a5b4fc"
+linkUnderline = false
+codeBackgroundColor = "#111827"
+dataframeHeaderBackgroundColor = "#151c2f"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFontWeights = [700, 650, 600, 600, 600, 600]
+headingFontSizes = ["2.75rem", "2rem", "1.5rem", "1.15rem", "1rem", "0.875rem"]
+baseRadius = "0.6rem"
+buttonRadius = "0.6rem"
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#0e1427"
+secondaryBackgroundColor = "#151c2f"
