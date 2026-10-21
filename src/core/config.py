@@ -9,6 +9,9 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 # Usado quando o modelo principal responde 503 (sobrecarga). Vazio desativa.
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
+# Último recurso quando o Gemini falha (cota 429, 503). Sem chave, o Groq fica desativado.
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")

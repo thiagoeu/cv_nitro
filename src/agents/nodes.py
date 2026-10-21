@@ -1,7 +1,7 @@
 import re
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from google.genai.errors import ServerError
+from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 from src.core import config
@@ -45,12 +45,18 @@ def _llm(temperature: float, thinking_level: Optional[str] = "low") -> ChatGoogl
     # O gerador com thinking padrão já levou ~150s numa chamada: 300s dá folga sem esperar para sempre.
     def make(model: str) -> ChatGoogleGenerativeAI:
         return ChatGoogleGenerativeAI(model=model, temperature=temperature, timeout=300, max_retries=2, **extra)
-    llm = make(config.GEMINI_MODEL)
-    fallback = config.GEMINI_FALLBACK_MODEL
-    if not fallback or fallback == config.GEMINI_MODEL:
-        return llm
-    # 503 "high demand" do Gemini persiste além dos retries: troca de modelo só em erro de servidor, não em prompt inválido.
-    return llm.with_fallbacks([make(fallback)], exceptions_to_handle=(ServerError,))
+    fallbacks = []
+    if config.GEMINI_FALLBACK_MODEL and config.GEMINI_FALLBACK_MODEL != config.GEMINI_MODEL:
+        fallbacks.append(make(config.GEMINI_FALLBACK_MODEL))
+    if config.GROQ_API_KEY:
+        # Tokens de raciocínio contam no limite por minuto do Groq; só o gpt-oss aceita "low".
+        groq_extra = {"reasoning_effort": thinking_level} if thinking_level and config.GROQ_MODEL.startswith("openai/gpt-oss") else {}
+        fallbacks.append(ChatGroq(model=config.GROQ_MODEL, temperature=temperature, timeout=300, max_retries=2, **groq_extra))
+    if not fallbacks:
+        return make(config.GEMINI_MODEL)
+    # Cadeia plana (with_fallbacks aninhado perde os reservas no with_structured_output).
+    # Qualquer erro troca de modelo: a cota 429 do free tier do Gemini é por modelo e estoura rápido.
+    return make(config.GEMINI_MODEL).with_fallbacks(fallbacks)
 
 def _text(response) -> str:
     """Gemini 3.x devolve `content` como lista de blocos; `.text` junta só o texto. Remove cercas ```markdown."""
@@ -61,6 +67,11 @@ class JobAnalysis(BaseModel):
     keywords: List[str] = Field(description="Principais palavras-chave, soft-skills e conceitos importantes da vaga.")
     technologies: List[str] = Field(description="Ferramentas, linguagens e frameworks técnicos exigidos ou desejados.")
     language: Literal["pt", "en", "es"] = Field(description="Idioma em que a vaga está escrita: 'en' inglês, 'pt' português, 'es' espanhol.")
+    summary: str = Field(description=(
+        "Resumo enxuto da vaga escrito no MESMO idioma da vaga (vaga em inglês → resumo em inglês), em tópicos curtos (máx. ~150 palavras): empresa e produto em uma frase, "
+        "cargo e senioridade, responsabilidades, requisitos obrigatórios e desejáveis. Exclua texto institucional genérico, "
+        "benefícios, declarações de diversidade e textos da interface do site."
+    ))
 
 def job_analyzer(state: dict) -> dict:
     """
@@ -70,14 +81,15 @@ def job_analyzer(state: dict) -> dict:
     job_description = state.get("job_description", "")
 
     if not job_description:
-        return {"job_keywords": [], "job_technologies": [], "job_language": "pt"}
+        return {"job_keywords": [], "job_technologies": [], "job_language": "pt", "job_summary": ""}
 
     structured_llm = _llm(temperature=0).with_structured_output(JobAnalysis)
     prompt = PromptTemplate.from_template(
         "Você é um recrutador especialista. Analise a seguinte vaga de emprego "
         "e extraia as principais tecnologias, palavras-chave comportamentais/conceituais "
         "e identifique o idioma em que a vaga está escrita. Ignore textos de interface do site "
-        "de vagas (ex.: 'Sobre a vaga', 'Candidatar-se') ao decidir o idioma.\n\n"
+        "de vagas (ex.: 'Sobre a vaga', 'Candidatar-se') ao decidir o idioma. "
+        "Escreva também um resumo enxuto da vaga, que substituirá o texto original nas próximas etapas.\n\n"
         "Vaga:\n{job_description}"
     )
     result = (prompt | structured_llm).invoke({"job_description": job_description})
@@ -85,8 +97,17 @@ def job_analyzer(state: dict) -> dict:
     return {
         "job_keywords": result.keywords,
         "job_technologies": result.technologies,
-        "job_language": result.language
+        "job_language": result.language,
+        "job_summary": result.summary
     }
+
+def _job_context(state: dict) -> str:
+    """Resumo da vaga + termos ATS no lugar do texto colado: corta boilerplate (benefícios, institucional) de cada chamada seguinte."""
+    summary = state.get("job_summary")
+    if not summary:
+        return state.get("job_description", "")
+    terms = ", ".join(dict.fromkeys((state.get("job_technologies") or []) + (state.get("job_keywords") or [])))
+    return f"{summary}\n\nPalavras-chave ATS: {terms}"
 
 def github_researcher(state: dict) -> dict:
     """
@@ -181,7 +202,7 @@ def resume_generator(state: dict) -> dict:
     Falhas do modelo são propagadas para o app não salvar o currículo base como se fosse otimizado.
     """
     base_resume = state.get("base_resume_md", "")
-    job_desc = state.get("job_description", "")
+    job_desc = _job_context(state)
     feedback = state.get("reviewer_feedback", "")
     L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
 
@@ -391,7 +412,7 @@ def cover_letter_generator(state: dict) -> dict:
     )
 
     user_prompt = (
-        f"--- VAGA ---\n{state.get('job_description', '')}\n\n"
+        f"--- VAGA ---\n{_job_context(state)}\n\n"
         f"--- CURRÍCULO DO CANDIDATO ---\n{state.get('generated_resume_md', '')}\n\n"
         f"--- PROJETOS DESTACADOS GITHUB ---\n{repos_summary}"
     )
