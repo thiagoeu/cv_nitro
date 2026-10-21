@@ -28,8 +28,11 @@ def get_supabase_client():
         return None
     try:
         from supabase import create_client
-        url = getattr(config, "SUPABASE_URL", None) or os.getenv("SUPABASE_URL")
-        key = getattr(config, "SUPABASE_KEY", None) or os.getenv("SUPABASE_KEY")
+        raw_url = getattr(config, "SUPABASE_URL", None) or os.getenv("SUPABASE_URL") or ""
+        url = raw_url.strip().rstrip("/")
+        if url.endswith("/rest/v1"):
+            url = url[:-len("/rest/v1")].rstrip("/")
+        key = (getattr(config, "SUPABASE_KEY", None) or os.getenv("SUPABASE_KEY") or "").strip()
         return create_client(url, key)
     except Exception as e:
         print(f"Aviso ao inicializar cliente Supabase: {e}")
@@ -119,7 +122,11 @@ def save_resume(
     with open(local_filepath, "w", encoding="utf-8") as f:
         f.write(file_content)
 
-    return f"supabase:{supabase_id}" if (supabase_id and not filepath) else local_filepath
+    if filepath and filepath.startswith("supabase:"):
+        return filepath
+    if supabase_id:
+        return f"supabase:{supabase_id}"
+    return local_filepath
 
 def list_resumes() -> List[Dict[str, Any]]:
     """

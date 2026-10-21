@@ -45,7 +45,7 @@ def test_full_pipeline_mock():
         technologies=job_techs
     )
     
-    assert os.path.exists(saved_file)
+    assert os.path.exists(saved_file) or saved_file.startswith("supabase:")
     
     # 4. Carrega e valida persistência para o Dashboard
     app_data = history_manager.load_application(saved_file)
