@@ -21,6 +21,22 @@ st.set_page_config(
 # Compilação do grafo LangGraph
 graph = build_graph()
 
+# Cache de alta performance para resposta instantânea ao clicar no Acesso Rápido
+@st.cache_data(ttl=30, show_spinner=False)
+def get_cached_resumes():
+    """Recupera lista de candidaturas com cache curto para garantir carregamento instantâneo."""
+    return history_manager.list_resumes()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_application(filepath: str):
+    """Carrega dados da aplicação com cache em memória para visualização sem latência de rede."""
+    return history_manager.load_application(filepath)
+
+def clear_history_cache():
+    """Invalida o cache de leitura após salvar, atualizar ou excluir candidaturas."""
+    get_cached_resumes.clear()
+    get_cached_application.clear()
+
 def show_errors(errors: list):
     for err in errors or []:
         st.warning(f"⚠️ {err}")
@@ -44,17 +60,18 @@ def render_sidebar():
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚡ Acesso Rápido")
+    st.sidebar.caption("🕒 Mais recentes primeiro:")
     
-    resumes = history_manager.list_resumes()
+    resumes = get_cached_resumes()
     if not resumes:
         st.sidebar.caption("Nenhuma candidatura salva ainda.")
     else:
         for idx, resume in enumerate(resumes[:8]):
-            date_str = str(resume.get('date', ''))[:10]
+            date_display = history_manager.format_display_date(resume.get('date', ''))
             job_title = resume.get('job_title', 'Vaga Desconhecida')
             lang = (resume.get('language') or 'pt').upper()
             
-            btn_label = f"[{lang}] {job_title[:16]}... ({date_str})"
+            btn_label = f"[{lang}] {job_title[:15]}... ({date_display})"
             if st.sidebar.button(btn_label, key=f"sidebar_hist_{idx}", width="stretch"):
                 st.session_state.viewing_history = resume['filepath']
                 st.rerun()
@@ -62,18 +79,19 @@ def render_sidebar():
     return page
 
 def render_application_view(filepath: str):
-    app_data = history_manager.load_application(filepath)
+    app_data = get_cached_application(filepath)
     metadata = app_data.get("metadata", {})
     job_title = metadata.get("job_title", "Vaga")
     job_url = metadata.get("job_url", "")
     lang = (metadata.get("language") or "pt").upper()
-    date_str = str(metadata.get("date", ""))[:19].replace("T", " ")
+    date_str = history_manager.format_display_date(metadata.get("date", ""))
     diagnostic = metadata.get("diagnostic", {})
     
-    col_back, col_rerun, col_spacer = st.columns([1.5, 2.5, 3.5])
+    col_back, col_rerun, col_delete = st.columns([1.5, 2.5, 2.0])
     with col_back:
         if st.button("← Voltar à Lista", width="stretch"):
-            del st.session_state.viewing_history
+            if "viewing_history" in st.session_state:
+                del st.session_state.viewing_history
             st.rerun()
     with col_rerun:
         is_rerun_open = st.session_state.get(f"show_rerun_{filepath}", False)
@@ -81,6 +99,17 @@ def render_application_view(filepath: str):
         if st.button(btn_label, type="primary" if not is_rerun_open else "secondary", width="stretch"):
             st.session_state[f"show_rerun_{filepath}"] = not is_rerun_open
             st.rerun()
+    with col_delete:
+        with st.popover("🗑️ Excluir", use_container_width=True):
+            st.markdown("⚠️ **Excluir esta candidatura?**")
+            st.caption("Esta ação remove o currículo e diagnóstico permanentemente.")
+            if st.button("Sim, Excluir Definitivamente", type="primary", key=f"btn_confirm_del_{filepath}", width="stretch"):
+                history_manager.delete_application(filepath)
+                clear_history_cache()
+                if "viewing_history" in st.session_state:
+                    del st.session_state.viewing_history
+                st.toast("Candidatura excluída com sucesso!")
+                st.rerun()
             
     # Painel interativo de Re-otimização
     if st.session_state.get(f"show_rerun_{filepath}", False):
@@ -163,6 +192,7 @@ def render_application_view(filepath: str):
                                 filepath=filepath,
                                 diagnostic=new_diag
                             )
+                            clear_history_cache()
                             st.session_state[f"show_rerun_{filepath}"] = False
                             st.session_state[f"run_errors_{filepath}"] = final_state.get("errors", [])
                             st.rerun()
@@ -244,7 +274,7 @@ def render_application_view(filepath: str):
 
 def render_dashboard(resumes: list):
     st.markdown("### 📊 Painel Geral de Candidaturas")
-    st.caption("Visão executiva do seu funil e métricas de mercado.")
+    st.caption("Visão executiva do seu funil e métricas de mercado (ordenado por data mais recente).")
     
     if not resumes:
         st.info("Nenhuma candidatura registrada ainda. Vá para a aba **🚀 Nova Otimização** para gerar seu primeiro currículo!")
@@ -295,13 +325,15 @@ def render_dashboard(resumes: list):
         st.bar_chart(lang_data)
 
     st.markdown("---")
-    st.markdown("##### 📋 Candidaturas Recentes")
+    st.markdown("##### 📋 Candidaturas Mais Recentes")
     
     cols_buttons = st.columns(min(len(resumes), 4))
     for i, r in enumerate(resumes[:4]):
         col_btn = cols_buttons[i % 4]
         job_t = r.get("job_title", "Vaga")
-        if col_btn.button(f"Abrir: {job_t[:18]}...", key=f"dash_btn_{i}", width="stretch"):
+        date_t = history_manager.format_display_date(r.get("date", ""))
+        btn_caption = f"Abrir: {job_t[:16]}...\n({date_t})"
+        if col_btn.button(btn_caption, key=f"dash_btn_{i}", width="stretch"):
             st.session_state.viewing_history = r["filepath"]
             st.rerun()
 
@@ -410,13 +442,14 @@ def render_new_optimization():
             github_username=github_user,
             diagnostic=final_state.get("diagnostic", {})
         )
+        clear_history_cache()
         st.session_state[f"run_errors_{saved_path}"] = final_state.get("errors", [])
         st.session_state.viewing_history = saved_path
         st.rerun()
 
 def render_applications_list(resumes: list):
     st.markdown("### 📚 Central de Candidaturas")
-    st.caption("Gerenciador completo de todas as suas candidaturas e currículos salvos.")
+    st.caption("Gerenciador completo de todas as suas candidaturas (ordenadas da mais recente à mais antiga).")
     
     if not resumes:
         st.info("Nenhuma candidatura encontrada no histórico.")
@@ -436,7 +469,7 @@ def render_applications_list(resumes: list):
     
     table_rows = []
     for r in filtered_resumes:
-        date_fmt = str(r.get("date", ""))[:16].replace("T", " ")
+        date_fmt = history_manager.format_display_date(r.get("date", ""))
         raw_url = r.get("job_url", "")
         valid_url = raw_url if (raw_url and (raw_url.startswith("http://") or raw_url.startswith("https://"))) else None
         diag = r.get("diagnostic", {})
@@ -469,7 +502,9 @@ def render_applications_list(resumes: list):
     cols = st.columns(min(len(filtered_resumes), 3))
     for idx, r in enumerate(filtered_resumes[:6]):
         col = cols[idx % 3]
-        if col.button(f"Visualizar: {r.get('job_title', 'Vaga')[:22]}", key=f"hist_card_{idx}", width="stretch"):
+        job_label = r.get('job_title', 'Vaga')[:20]
+        date_label = history_manager.format_display_date(r.get('date', ''))
+        if col.button(f"{job_label}\n({date_label})", key=f"hist_card_{idx}", width="stretch"):
             st.session_state.viewing_history = r["filepath"]
             st.rerun()
 
@@ -483,6 +518,21 @@ def render_settings():
     if is_supa:
         st.success("🟢 **Supabase Conectado:** Suas candidaturas e diagnósticos estão sendo salvos no banco de dados PostgreSQL na nuvem.")
         st.caption(f"Host: `{config.SUPABASE_URL[:25]}...`")
+        
+        c_sync, c_clean = st.columns(2)
+        with c_sync:
+            if st.button("🔄 Sincronizar Histórico Local com Supabase", help="Envia currículos locais que ainda não foram para a nuvem", width="stretch"):
+                with st.spinner("Sincronizando..."):
+                    n_sync = history_manager.sync_local_to_supabase()
+                    clear_history_cache()
+                    st.success(f"{n_sync} currículo(s) local(is) sincronizado(s) no Supabase!")
+                    st.rerun()
+        with c_clean:
+            if st.button("🧹 Limpar Registros de Teste do Supabase", help="Remove vagas criadas por testes como Staff AI Agent Engineer, etc.", width="stretch"):
+                n_del = history_manager.clean_test_records_from_supabase()
+                clear_history_cache()
+                st.success(f"{n_del} registro(s) de teste removido(s) do Supabase!")
+                st.rerun()
     else:
         st.info("🟡 **Armazenamento Local Ativo:** Os currículos estão sendo salvos como arquivos Markdown na pasta `history/`.")
         with st.expander("☁️ Como ativar o Supabase para Deploy na Nuvem (Streamlit Cloud)", expanded=False):
@@ -532,7 +582,7 @@ def main():
         render_application_view(st.session_state.viewing_history)
         return
         
-    resumes = history_manager.list_resumes()
+    resumes = get_cached_resumes()
     
     if selected_page == "📊 Dashboard Executivo":
         render_dashboard(resumes)

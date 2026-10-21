@@ -9,6 +9,16 @@ def no_llm_fallback(monkeypatch):
     monkeypatch.setattr("src.core.config.GROQ_API_KEY", "")
 
 @pytest.fixture(autouse=True)
+def isolate_supabase_in_tests(monkeypatch):
+    """
+    Desconecta o Supabase real durante a execução de testes automatizados,
+    garantindo que os testes utilizem o armazenamento local temporário
+    sem inserir registros de teste na tabela de produção do usuário.
+    """
+    monkeypatch.setattr("src.core.history_manager.is_supabase_configured", lambda: False)
+    monkeypatch.setattr("src.core.history_manager.get_supabase_client", lambda: None)
+
+@pytest.fixture(autouse=True)
 def isolate_test_history(tmp_path):
     """
     Garante que qualquer teste que utilize o history_manager utilize um diretório temporário,
@@ -27,3 +37,4 @@ def isolate_test_history(tmp_path):
         os.environ["HISTORY_DIR"] = old_val
     else:
         os.environ.pop("HISTORY_DIR", None)
+
