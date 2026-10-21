@@ -10,6 +10,7 @@ from src.ui.applications_view import render_applications_view, render_applicatio
 from src.ui.profile_view import render_profile_view
 from src.ui.settings_view import render_settings_view
 from src.ui.auth_views import render_login_view, render_signup_view, render_logout_view
+from src.ui.landing_view import render_landing_view
 
 LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.svg")
 
@@ -28,7 +29,8 @@ graph = build_graph()
 if "user_session" not in st.session_state:
     st.session_state.user_session = auth_manager.create_guest_session()
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "dashboard"
+    is_guest = st.session_state.user_session.get("is_guest", True)
+    st.session_state.current_page = "landing" if is_guest else "dashboard"
 
 # 4. Funções de Cache de Alta Performance
 @st.cache_data(ttl=30, show_spinner=False)
@@ -88,6 +90,7 @@ def main():
 
     # Navbar superior com os links das páginas e o menu de conta
     page = render_navbar({
+        "landing": render_landing_view,
         "dashboard": lambda: render_dashboard_view(resumes),
         "wizard": lambda: render_wizard_view(graph, clear_history_cache),
         "applications": lambda: render_applications_view(resumes, get_cached_application, clear_history_cache, graph),

@@ -8,12 +8,9 @@ def _auth_header(title: str, subtitle: str):
     st.markdown(f"### {title}", text_alignment="center", anchors=False)
     st.caption(subtitle, text_alignment="center")
 
-def _continue_as_guest(on_success_callback: Optional[Callable], key: str):
-    if st.button("Continuar como visitante", type="tertiary", icon=":material/person:", key=key):
-        st.session_state.user_session = auth_manager.create_guest_session()
-        if on_success_callback:
-            on_success_callback()
-        set_page("dashboard")
+def _back_to_landing(key: str):
+    if st.button("Voltar ao Início", type="tertiary", icon=":material/arrow_back:", key=key):
+        set_page("landing")
         st.rerun()
 
 def render_login_view(on_success_callback: Optional[Callable] = None):
@@ -57,7 +54,7 @@ def render_login_view(on_success_callback: Optional[Callable] = None):
                 if st.button("Não tem conta? Cadastre-se", type="tertiary", icon=":material/person_add:", key="btn_go_to_signup"):
                     set_page("signup")
                     st.rerun()
-                _continue_as_guest(on_success_callback, key="btn_guest_from_login")
+                _back_to_landing(key="btn_back_from_login")
 
 def render_signup_view(on_success_callback: Optional[Callable] = None):
     """
@@ -111,15 +108,15 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
                 if st.button("Já tem conta? Entrar", type="tertiary", icon=":material/login:", key="btn_go_to_login"):
                     set_page("login")
                     st.rerun()
-                _continue_as_guest(on_success_callback, key="btn_guest_from_signup")
+                _back_to_landing(key="btn_back_from_signup")
 
 def render_logout_view(on_success_callback: Optional[Callable] = None):
-    """Página 'Sair' do menu de conta: encerra a sessão e volta ao dashboard."""
+    """Página 'Sair' do menu de conta: encerra a sessão e volta para a landing page."""
     auth_manager.sign_out()
     st.session_state.user_session = auth_manager.create_guest_session()
     clear_transient_state()
     if on_success_callback:
         on_success_callback()
     st.toast("Sessão encerrada.", icon=":material/logout:")
-    set_page("dashboard")
+    set_page("landing")
     st.rerun()
