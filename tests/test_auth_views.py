@@ -39,3 +39,48 @@ def test_render_signup_view_structure():
         
         # Garante que campos de nome, email e senhas foram chamados
         assert mock_input.call_count >= 3
+
+def test_login_success_stores_auth_token():
+    st.session_state.clear()
+    st.query_params.clear()
+
+    mock_user = {
+        "user_id": "usr_abc",
+        "email": "test@domain.com",
+        "display_name": "Test User",
+        "is_authenticated": True,
+        "is_guest": False
+    }
+
+    with patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.form"), \
+         patch("streamlit.text_input"), \
+         patch("streamlit.form_submit_button", return_value=True), \
+         patch("streamlit.button", return_value=False), \
+         patch("streamlit.toast"), \
+         patch("streamlit.rerun"), \
+         patch("src.ui.auth_views.auth_manager.sign_in_with_password", return_value={"success": True, "user": mock_user}), \
+         patch("src.ui.auth_views.set_page") as mock_set_page:
+        
+        # Simula preenchimento dos campos via monkeypatch do form submission
+        auth_views.render_login_view()
+        # Se campos forem vazios pelo mock de text_input, auth_error é disparado
+        # Vamos testar chamando com campos preenchidos
+    
+    with patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.form"), \
+         patch("streamlit.text_input", side_effect=["test@domain.com", "senha123"]), \
+         patch("streamlit.form_submit_button", return_value=True), \
+         patch("streamlit.button", return_value=False), \
+         patch("streamlit.toast"), \
+         patch("streamlit.rerun"), \
+         patch("src.ui.auth_views.auth_manager.sign_in_with_password", return_value={"success": True, "user": mock_user}), \
+         patch("src.ui.auth_views.set_page") as mock_set_page:
+        
+        auth_views.render_login_view()
+        assert st.session_state.user_session["user_id"] == "usr_abc"
+        assert "auth_token" in st.query_params
+        assert "." in st.query_params["auth_token"]
+        mock_set_page.assert_called_with("dashboard")
