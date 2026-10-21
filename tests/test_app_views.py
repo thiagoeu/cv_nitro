@@ -1,10 +1,10 @@
 import pytest
+import streamlit as st
 from unittest.mock import patch, MagicMock
 import app
 
 def test_app_views_smoke():
-    with patch("streamlit.sidebar.radio", return_value="📊 Dashboard Executivo"), \
-         patch("streamlit.sidebar.title"), \
+    with patch("streamlit.sidebar.title"), \
          patch("streamlit.sidebar.caption"), \
          patch("streamlit.sidebar.markdown"), \
          patch("streamlit.sidebar.subheader"), \
@@ -14,8 +14,7 @@ def test_app_views_smoke():
          patch("streamlit.info"):
         
         # Test sidebar
-        page = app.render_sidebar()
-        assert page == "📊 Dashboard Executivo"
+        app.render_sidebar([])
 
         # Test empty dashboard
         app.render_dashboard([])

@@ -11,10 +11,31 @@ def ensure_profiles_dir() -> str:
         os.makedirs(p, exist_ok=True)
     return p
 
+def get_schema_sql() -> str:
+    """
+    Retorna o conteúdo do script supabase_schema.sql para exibição na UI e cópia fácil.
+    """
+    schema_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "supabase_schema.sql")
+    if os.path.exists(schema_path):
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            pass
+    # Fallback se executado de outro diretório
+    if os.path.exists("supabase_schema.sql"):
+        try:
+            with open("supabase_schema.sql", "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            pass
+    return "-- Execute o script supabase_schema.sql no SQL Editor do painel do Supabase."
+
 def check_or_setup_tables() -> Dict[str, Any]:
     """
     Verifica se a infraestrutura de tabelas (Supabase e local) está pronta para uso.
-    Retorna o diagnóstico de prontidão das tabelas applications e user_profiles.
+    Retorna o diagnóstico de prontidão das tabelas applications e user_profiles,
+    além das instruções detalhadas e script SQL para migração.
     """
     ensure_profiles_dir()
     
@@ -23,7 +44,13 @@ def check_or_setup_tables() -> Dict[str, Any]:
         "applications_ready": False,
         "user_profiles_ready": False,
         "local_ready": True,
-        "message": ""
+        "message": "",
+        "sql_script": get_schema_sql(),
+        "migration_instructions": (
+            "1. Acesse https://supabase.com/dashboard/project/<seu-projeto>/sql\n"
+            "2. Cole o script SQL fornecido abaixo no SQL Editor.\n"
+            "3. Clique em 'Run' para aplicar tabelas, políticas RLS e triggers de usuário."
+        )
     }
 
     if not history_manager.is_supabase_configured():
