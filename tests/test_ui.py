@@ -25,3 +25,19 @@ def test_diagnostic_panel_with_empty_data():
     with patch("streamlit.info") as mock_info:
         render_ats_diagnostic_panel({})
         assert mock_info.called
+
+def test_theme_tokens_and_apply_theme():
+    from src.ui.components import THEME_TOKENS, apply_theme
+    assert THEME_TOKENS["bg_neutral"] == "#F8FAFC"
+    assert THEME_TOKENS["bg_surface"] == "#F1F5F9"
+    assert THEME_TOKENS["text_primary"] == "#0F172A"
+    assert THEME_TOKENS["border"] == "#CBD5E1"
+    assert THEME_TOKENS["accent_mint"] == "#10B981"
+    assert THEME_TOKENS["accent_cyan"] == "#0EA5E9"
+
+    with patch("streamlit.markdown") as mock_markdown:
+        apply_theme()
+        assert mock_markdown.called
+        css_injected = mock_markdown.call_args[0][0]
+        assert "#CBD5E1" in css_injected
+        assert "#10B981" in css_injected

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 from src.ui.navbar import set_page
-from src.ui.components import page_header, login_gate, application_card
+from src.ui.components import page_header, login_gate, application_card, THEME_TOKENS
 
 def render_dashboard_view(resumes: list):
     """
@@ -60,7 +60,7 @@ def render_dashboard_view(resumes: list):
             st.markdown("#### :material/bar_chart: Tecnologias mais pedidas")
             if tech_counter:
                 df_techs = pd.DataFrame(tech_counter.most_common(10), columns=["Tecnologia", "Vagas"])
-                st.bar_chart(df_techs, x="Tecnologia", y="Vagas", horizontal=True, sort="-Vagas", color="#6366f1", x_label="", y_label="")
+                st.bar_chart(df_techs, x="Tecnologia", y="Vagas", horizontal=True, sort="-Vagas", color=THEME_TOKENS["accent_cyan"], x_label="", y_label="")
             else:
                 st.caption("As tecnologias aparecem aqui conforme novas vagas forem analisadas.")
 
