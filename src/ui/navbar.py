@@ -80,12 +80,48 @@ def render_navbar() -> str:
         header[data-testid="stHeader"] button {
             pointer-events: auto !important;
         }
+
+        /* Estilização moderna do botão que abre o menu lateral (Acesso Rápido) */
+        [data-testid="stSidebarCollapsedControl"] {
+            top: 1.8rem !important;
+            left: 1.2rem !important;
+            z-index: 99999 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        [data-testid="stSidebarCollapsedControl"] button {
+            background: rgba(30, 41, 59, 0.9) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            border-radius: 8px !important;
+            color: #f8fafc !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+            backdrop-filter: blur(8px) !important;
+            transition: all 0.2s ease !important;
+            padding: 6px 10px !important;
+        }
+        [data-testid="stSidebarCollapsedControl"] button:hover {
+            background: #334155 !important;
+            border-color: #6366f1 !important;
+            transform: scale(1.05) !important;
+        }
+
+        /* Botão de colapsar dentro da sidebar */
+        [data-testid="stSidebarCollapseButton"] button {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 6px !important;
+            transition: all 0.2s ease !important;
+        }
+        [data-testid="stSidebarCollapseButton"] button:hover {
+            background: rgba(255, 255, 255, 0.1) !important;
+            border-color: #6366f1 !important;
+        }
         
-        /* Posiciona a Navbar de forma limpa no topo da tela */
+        /* Posiciona a Navbar de forma limpa no topo da tela com recuo para não colidir com o botão de menu */
         .block-container {
             padding-top: 2rem !important;
             padding-bottom: 2.5rem !important;
-            padding-left: 2.5rem !important;
+            padding-left: 3.5rem !important;
             padding-right: 2.5rem !important;
         }
 
