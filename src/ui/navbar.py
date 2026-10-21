@@ -54,6 +54,41 @@ def render_navbar() -> str:
     # Injeção de CSS para estilização moderna e premium da Navbar
     st.markdown("""
     <style>
+        /* Oculta completamente o botão de Deploy do Streamlit e decorações nativas */
+        .stAppDeployButton,
+        [data-testid="stAppDeployButton"],
+        .stDeployButton,
+        [data-testid="stDecoration"],
+        #MainMenu,
+        footer {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0px !important;
+            width: 0px !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* Desobstrui o cabeçalho superior do Streamlit */
+        header[data-testid="stHeader"] {
+            background-color: transparent !important;
+            height: 0px !important;
+            min-height: 0px !important;
+            pointer-events: none !important;
+        }
+        header[data-testid="stHeader"] [data-testid="stSidebarCollapseButton"],
+        header[data-testid="stHeader"] button {
+            pointer-events: auto !important;
+        }
+        
+        /* Posiciona a Navbar de forma limpa no topo da tela */
+        .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 2.5rem !important;
+            padding-left: 2.5rem !important;
+            padding-right: 2.5rem !important;
+        }
+
         .navbar-brand-container {
             display: flex;
             align-items: center;
@@ -63,6 +98,7 @@ def render_navbar() -> str:
             color: #f8fafc;
             letter-spacing: -0.02em;
             padding: 4px 0;
+            white-space: nowrap;
         }
         .navbar-badge {
             background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
@@ -80,21 +116,17 @@ def render_navbar() -> str:
             gap: 6px;
             font-size: 0.85rem;
             color: #94a3b8;
-            padding: 4px 10px;
-            background: rgba(255, 255, 255, 0.04);
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.05);
             border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        /* Remove espaçamento excessivo superior padrão do Streamlit */
-        .block-container {
-            padding-top: 1.5rem;
-            padding-bottom: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            white-space: nowrap;
         }
     </style>
     """, unsafe_allow_html=True)
 
     # Layout de colunas do Header: [Logo + Brand] | [Nav Tabs] | [Auth Area]
-    col_brand, col_tabs, col_auth = st.columns([3.0, 5.2, 3.8], vertical_alignment="center")
+    col_brand, col_tabs, col_auth = st.columns([2.5, 6.5, 3.0], vertical_alignment="center")
 
     with col_brand:
         st.markdown(
