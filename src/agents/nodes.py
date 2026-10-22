@@ -109,23 +109,102 @@ def _job_context(state: dict) -> str:
     terms = ", ".join(dict.fromkeys((state.get("job_technologies") or []) + (state.get("job_keywords") or [])))
     return f"{summary}\n\nPalavras-chave ATS: {terms}"
 
+def _score_repository(repo: dict, target_technologies: List[str]) -> float:
+    """
+    Pontua a relevância de um repositório para a vaga alvo de forma determinística (0 tokens de LLM).
+    Considera forks (penalizados/ignorados), linguagem principal, topics/tags, descrição com word boundaries e estrelas.
+    """
+    if repo.get("fork", False):
+        return -1.0
+
+    score = 0.0
+    tech_set = {t.lower().strip() for t in target_technologies if t and t.strip()}
+    if not tech_set:
+        return 1.0
+
+    # 1. Correspondência de linguagem principal (+4.0)
+    repo_lang = (repo.get("language") or "").strip().lower()
+    if repo_lang and repo_lang in tech_set:
+        score += 4.0
+
+    # 2. Correspondência em topics/tags (+2.5 por tópico coincidente)
+    for topic in repo.get("topics", []) or []:
+        topic_clean = str(topic).strip().lower()
+        if topic_clean in tech_set:
+            score += 2.5
+
+    # 3. Correspondência na descrição com word boundaries para evitar falsos positivos (+1.5 por termo)
+    desc = str(repo.get("description") or "").lower()
+    if desc:
+        for tech in tech_set:
+            # Word boundary regex previne que "c" case com "react", "go" com "google", etc.
+            pattern = rf"(?<!\w){re.escape(tech)}(?!\w)"
+            if re.search(pattern, desc):
+                score += 1.5
+
+    # 4. Bônus por popularidade (estrelas)
+    stars = int(repo.get("stargazers_count") or 0)
+    if stars > 0:
+        score += min(2.0, stars * 0.2)
+
+    return score
+
+def _clean_readme(raw_markdown: str, max_chars: int = 1200) -> str:
+    """
+    Higieniza o conteúdo de um README removendo ruídos irrelevantes (badges, tags HTML,
+    links de licença, comandos de instalação) e preservando a arquitetura e funcionalidades.
+    """
+    if not raw_markdown:
+        return ""
+
+    text = raw_markdown
+
+    # Remove tags HTML
+    text = re.sub(r"<[^>]+>", " ", text)
+
+    # Remove badges em Markdown: [![...](...)](...) ou ![...](...)
+    text = re.sub(r"\[!\[.*?\]\(.*?\)\]\(.*?\)", "", text)
+    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
+
+    # Transforma links normais [Texto](URL) apenas no texto do link
+    text = re.sub(r"\[(.*?)\]\(https?://[^\s)]+\)", r"\1", text)
+
+    # Remove seções triviais de Licença, Contribuição ou Instalação padrão
+    section_pattern = r"(?im)^##+\s+(?:licen[çc]a|license|contributing|contribui[çc][ãa]o|como rodar|instala[çc][ãa]o|installation)[\s\S]*?(?=(?:^##+\s+)|\Z)"
+    text = re.sub(section_pattern, "", text)
+
+    # Normaliza múltiplos espaços e quebras de linha consecutivas
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text).strip()
+
+    if len(text) <= max_chars:
+        return text
+
+    # Trunca no limite respeitando o último parágrafo ou ponto final
+    truncated = text[:max_chars]
+    last_break = max(truncated.rfind("\n"), truncated.rfind(". "))
+    if last_break > max_chars * 0.6:
+        return truncated[:last_break].strip() + "\n..."
+    return truncated.strip() + "..."
+
 def github_researcher(state: dict) -> dict:
     """
-    Busca repositórios públicos do usuário no GitHub e extrai READMEs 
-    dos repositórios que tenham as linguagens/tecnologias buscadas pela vaga.
+    Busca repositórios públicos do usuário no GitHub, filtra forks e ranqueia 
+    os mais relevantes por pontuação determinística em relação às tecnologias da vaga.
     """
     username = (state.get("github_username") or "").strip()
-    technologies = [t.lower() for t in state.get("job_technologies", [])]
+    technologies = state.get("job_technologies", []) or []
     
     if not username:
         return {"github_repos": [], "github_readmes": {}}
 
     # Validação do nome de usuário do GitHub (alfanumérico com hifens simples internos, max 39 chars)
     if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", username):
-        print(f"Nome de usuário GitHub inválido ou potencialmente inseguro: '{username}'")
-        return {"github_repos": [], "github_readmes": {}}
+        msg = f"Nome de usuário GitHub inválido ou potencialmente inseguro: '{username}'."
+        print(msg)
+        return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
         
-    headers = {}
+    headers = {"Accept": "application/vnd.github.mercy-preview+json"}
     token = config.GITHUB_TOKEN
     if token and "your_github_token_here" not in token:
         headers["Authorization"] = f"Bearer {token}"
@@ -135,34 +214,52 @@ def github_researcher(state: dict) -> dict:
     
     try:
         response = requests.get(repos_url, headers=headers, timeout=request_timeout)
-        if response.status_code != 200:
-            print(f"Erro ao acessar GitHub: {response.status_code}")
-            return {"github_repos": [], "github_readmes": {}}
+        if response.status_code == 403:
+            msg = "Limite de requisições da API do GitHub atingido (HTTP 403). Configure GITHUB_TOKEN no .env."
+            print(msg)
+            return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
+        elif response.status_code == 404:
+            msg = f"Usuário '{username}' não foi encontrado no GitHub (HTTP 404)."
+            print(msg)
+            return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
+        elif response.status_code != 200:
+            msg = f"Falha ao acessar GitHub para '{username}' (HTTP {response.status_code})."
+            print(msg)
+            return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
             
         repos = response.json()
+        if not isinstance(repos, list):
+            return {"github_repos": [], "github_readmes": {}}
+
+        # Prioriza repositórios autorais (não-forks); se todos forem forks, mantém como fallback
+        non_forks = [r for r in repos if not r.get("fork", False)]
+        candidate_repos = non_forks if non_forks else repos
+
+        # Ranqueamento determinístico por score e data de atualização
+        scored_repos = []
+        for repo in candidate_repos:
+            score = _score_repository(repo, technologies)
+            scored_repos.append((score, repo))
+
+        # Ordena decrescente pelo score e depois pela data de atualização
+        scored_repos.sort(key=lambda item: (item[0], item[1].get("updated_at") or ""), reverse=True)
+
+        # Seleciona os top 3 repositórios
         selected_repos = []
+        for score, repo in scored_repos[:3]:
+            selected_repos.append({
+                "name": repo.get("name", ""),
+                "description": repo.get("description") or "",
+                "language": repo.get("language") or "",
+                "url": repo.get("html_url", ""),
+                "default_branch": repo.get("default_branch", "main"),
+                "relevance_score": score
+            })
+
         readmes = {}
-        
-        # Filtra os repositórios mais promissores
-        for repo in repos:
-            repo_lang = (repo.get("language") or "").lower()
-            
-            if not technologies or repo_lang in technologies or any(t in str(repo.get("description", "")).lower() for t in technologies):
-                selected_repos.append({
-                    "name": repo["name"],
-                    "description": repo.get("description", ""),
-                    "language": repo.get("language"),
-                    "url": repo["html_url"],
-                    "default_branch": repo["default_branch"]
-                })
-                
-                if len(selected_repos) >= 3:
-                    break
-                    
         for repo in selected_repos:
             repo_name = repo["name"]
-            # Validação do nome do repositório para evitar path traversal ou caracteres de controle
-            if not re.match(r"^[a-zA-Z0-9_.-]+$", repo_name):
+            if not repo_name or not re.match(r"^[a-zA-Z0-9_.-]+$", repo_name):
                 continue
                 
             readme_url = f"https://api.github.com/repos/{username}/{repo_name}/readme"
@@ -171,7 +268,8 @@ def github_researcher(state: dict) -> dict:
                 if readme_resp.status_code == 200:
                     content_b64 = readme_resp.json().get("content", "")
                     content_str = base64.b64decode(content_b64).decode("utf-8", errors="replace")
-                    readmes[repo_name] = content_str
+                    # Higieniza o README preservando contexto útil de até 1.200 caracteres
+                    readmes[repo_name] = _clean_readme(content_str, max_chars=1200)
             except Exception as e:
                 print(f"Erro ao baixar README de {repo_name}: {e}")
                 
@@ -180,18 +278,24 @@ def github_researcher(state: dict) -> dict:
             "github_readmes": readmes
         }
         
+    except requests.exceptions.Timeout:
+        msg = "Tempo limite esgotado ao conectar à API do GitHub."
+        print(msg)
+        return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
     except Exception as e:
-        print(f"Erro no GitHub Researcher: {e}")
-        return {"github_repos": [], "github_readmes": {}}
+        msg = f"Erro no GitHub Researcher: {e}"
+        print(msg)
+        return {"github_repos": [], "github_readmes": {}, "errors": [msg]}
 
-def _portfolio_context(state: dict, readme_chars: int) -> str:
+def _portfolio_context(state: dict, readme_chars: int = 1200) -> str:
     context = ""
     readmes = state.get("github_readmes", {})
     for repo in state.get("github_repos", []):
         name = repo["name"]
+        cleaned_content = readmes.get(name, "")[:readme_chars]
         context += (
             f"\n### Repositório: {name}\nURL: {repo.get('url', '')}\nLinguagem: {repo.get('language', '')}\n"
-            f"Descrição: {repo.get('description', '')}\nREADME:\n{readmes.get(name, '')[:readme_chars]}\n"
+            f"Descrição: {repo.get('description', '')}\nREADME (extrato técnico):\n{cleaned_content}\n"
         )
     return context
 
@@ -264,7 +368,7 @@ REGRAS CRÍTICAS:
     user_prompt = (
         f"--- VAGA ---\n{job_desc}\n\n"
         f"--- CURRÍCULO BASE ---\n{base_resume}\n\n"
-        f"--- PORTFÓLIO GITHUB ---\n{_portfolio_context(state, 400)}"
+        f"--- PORTFÓLIO GITHUB ---\n{_portfolio_context(state, 1200)}"
     )
 
     # Etapa de qualidade: mantém o thinking padrão do modelo.
@@ -274,6 +378,100 @@ REGRAS CRÍTICAS:
     ])
     return {"generated_resume_md": _text(response)}
 
+def _term_in_text(term: str, text_lower: str) -> bool:
+    """Verifica presença de termo técnico respeitando limites de palavras sem falso positivo."""
+    term_clean = term.lower().strip()
+    if not term_clean:
+        return False
+    # Para termos com caracteres especiais (+, #, ., -), ex: c++, c#, .net, node.js
+    pattern = rf"(?<![a-zA-Z0-9]){re.escape(term_clean)}(?![a-zA-Z0-9])"
+    return bool(re.search(pattern, text_lower))
+
+def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool, list[str], dict]:
+    """
+    Auditoria determinística Tier 1 (0 tokens de LLM):
+    1. Placeholders residuais (<Nome>, <Empresa>, etc.) - Crítico
+    2. Integridade de URLs de repositórios citados vs repositórios obtidos do GitHub - Crítico
+    3. Conformidade da tabela de habilidades (aviso e cálculo estrutural)
+    4. Mapeamento real de termos da vaga e cálculo auditável de ATS (50 a 98)
+    """
+    critical_issues = []
+    warnings = []
+    generated_md = generated_md or ""
+
+    # 1. Placeholders residuais: detecta padrões como <Nome>, <Cargo alvo...>, <Cidade, UF>
+    # Excetua endereços de e-mail no formato <usuario@dominio.com>
+    placeholders = re.findall(r"<[A-Za-zÀ-ÿ0-9\s/—–_.,:-]+>", generated_md)
+    unfilled = [p for p in placeholders if not re.match(r"^<[^@\s]+@[^@\s]+\.[^@\s]+>$", p)]
+    if unfilled:
+        sample = ", ".join(unfilled[:3])
+        critical_issues.append(f"O currículo contém marcadores de preenchimento não substituídos: {sample}")
+
+    # 2. Integridade de URLs de repositórios do GitHub
+    valid_repo_urls = set()
+    for r in state.get("github_repos", []) or []:
+        url = (r.get("url") or "").strip().rstrip("/").lower()
+        if url:
+            valid_repo_urls.add(url)
+            
+    username = (state.get("github_username") or "").strip().lower()
+    user_profile_url = f"https://github.com/{username}".rstrip("/").lower() if username else ""
+
+    cited_github_urls = re.findall(r"https?://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", generated_md)
+    for raw_url in cited_github_urls:
+        url_clean = raw_url.strip().rstrip("/").lower()
+        if url_clean == user_profile_url:
+            continue
+        if valid_repo_urls and url_clean not in valid_repo_urls:
+            critical_issues.append(f"O repositório citado '{raw_url}' não consta no portfólio retornado pela API do GitHub")
+
+    # 3. Tabela Markdown de habilidades com 2 colunas
+    has_table = bool(re.search(r"\|\s*:?---+\s*\|\s*:?---+\s*\|", generated_md))
+    if not has_table:
+        warnings.append("A seção de habilidades deve conter uma tabela Markdown de 2 colunas com o separador '| :--- | :--- |'")
+
+    # 4. Mapeamento de termos ATS e pontuação auditável
+    job_technologies = [t.strip() for t in (state.get("job_technologies") or []) if t and t.strip()]
+    job_keywords = [k.strip() for k in (state.get("job_keywords") or []) if k and k.strip()]
+    gen_lower = generated_md.lower()
+
+    matched_techs = [t for t in job_technologies if _term_in_text(t, gen_lower)]
+    matched_kws = [k for k in job_keywords if _term_in_text(k, gen_lower)]
+
+    seen = set()
+    unique_matched = []
+    for m in (matched_techs + matched_kws):
+        if m.lower() not in seen:
+            seen.add(m.lower())
+            unique_matched.append(m)
+
+    tech_rate = len(matched_techs) / max(len(job_technologies), 1)
+    keyword_rate = len(matched_kws) / max(len(job_keywords), 1)
+    structural_penalties = (len(critical_issues) * 0.25) + (0.20 if not has_table else 0.0)
+    structural_rate = max(0.4, 1.0 - structural_penalties)
+
+    base_score = (0.50 * tech_rate) + (0.25 * keyword_rate) + (0.25 * structural_rate)
+    ats_score = int(min(98, max(50, round(50 + base_score * 48))))
+
+    applied_changes = [
+        f"Alinhamento comprovado de {len(matched_techs)} tecnologias da vaga no histórico",
+        f"Integração natural de {len(matched_kws)} palavras-chave conceituais/ATS",
+        "Formatação de habilidades técnicas em tabela padronizada de 2 colunas" if has_table else "Estrutura executiva em tópicos aplicada",
+        "Experiências reescritas com foco em impacto e verbos de ação"
+    ]
+
+    is_valid = len(critical_issues) == 0
+    diagnostic_data = {
+        "ats_score": ats_score,
+        "matched_keywords": unique_matched,
+        "applied_changes": applied_changes,
+        "tech_coverage": round(tech_rate * 100),
+        "keyword_coverage": round(keyword_rate * 100),
+        "warnings": warnings
+    }
+
+    return is_valid, critical_issues, diagnostic_data
+
 class ReviewResult(BaseModel):
     approved: bool = Field(description="True se o currículo não tiver alucinações, estiver todo no idioma pedido e seguir o padrão estrutural; False caso contrário.")
     feedback: str = Field(description="Feedback detalhado explicando o que foi corrigido ou aprovado.")
@@ -282,56 +480,60 @@ class ReviewResult(BaseModel):
 
 def quality_reviewer(state: dict) -> dict:
     """
-    Revisa o currículo gerado para garantir conformidade estrutural, idioma da vaga,
-    ausência de informações técnicas ou cargos inventados, e gera diagnóstico ATS.
+    Revisa o currículo gerado combinando validação determinística Tier 1 (0 tokens)
+    com auditoria semântica Tier 2 via LLM para máxima qualidade e eficiência de tokens.
     """
     attempts = state.get("review_attempts", 0)
-
-    # Identifica correspondência de termos técnicos e keywords no currículo gerado
     generated_md = state.get("generated_resume_md", "") or ""
-    all_terms = (state.get("job_keywords") or []) + (state.get("job_technologies") or [])
-    gen_lower = generated_md.lower()
-    matched = [t for t in all_terms if t.lower() in gen_lower]
-    seen = set()
-    unique_matched = []
-    for m in matched:
-        if m.lower() not in seen:
-            seen.add(m.lower())
-            unique_matched.append(m)
-
-    # Se modo econômico ativado (strict_review=False), ignora chamada de LLM adicional
-    if not state.get("strict_review", True):
-        match_ratio = len(unique_matched) / max(len(all_terms), 1)
-        estimated_score = min(98, max(75, int(70 + match_ratio * 25)))
-        return {
-            "reviewer_approved": True,
-            "reviewer_feedback": "Aprovado em modo econômico de tokens.",
-            "review_attempts": attempts + 1,
-            "diagnostic": {
-                "ats_score": estimated_score,
-                "matched_keywords": unique_matched,
-                "applied_changes": [
-                    "Estrutura executiva em Markdown de alta fidelidade aplicada",
-                    f"Incorporação de {len(unique_matched)} termos e tecnologias da vaga",
-                    "Tabela de habilidades técnicas padronizada em 2 colunas"
-                ],
-                "reviewer_summary": "Currículo validado rapidamente em modo econômico com foco em termos ATS."
-            }
-        }
 
     if attempts >= MAX_REVIEW_ATTEMPTS:
+        _, _, diag = _validate_resume_deterministic(generated_md, state)
         return {
             "reviewer_approved": False,
             "reviewer_feedback": "Limite de tentativas de revisão atingido. Prosseguindo com versão atual.",
             "review_attempts": attempts + 1,
             "diagnostic": {
-                "ats_score": 80,
-                "matched_keywords": unique_matched,
-                "applied_changes": ["Currículo adaptado para a vaga alvo"],
+                "ats_score": diag["ats_score"],
+                "matched_keywords": diag["matched_keywords"],
+                "applied_changes": diag["applied_changes"],
                 "reviewer_summary": "Limite de revisões atingido; versão preservada para o usuário."
             }
         }
 
+    # Validação determinística preliminar (Tier 1 - zero tokens)
+    is_valid, critical_issues, diag = _validate_resume_deterministic(generated_md, state)
+
+    # Modo econômico (strict_review=False): utiliza apenas o diagnóstico determinístico
+    if not state.get("strict_review", True):
+        feedback_eco = "Aprovado em modo econômico com validação estrutural determinística." if is_valid else f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}."
+        return {
+            "reviewer_approved": True,
+            "reviewer_feedback": feedback_eco,
+            "review_attempts": attempts + 1,
+            "diagnostic": {
+                "ats_score": diag["ats_score"],
+                "matched_keywords": diag["matched_keywords"],
+                "applied_changes": diag["applied_changes"],
+                "reviewer_summary": feedback_eco
+            }
+        }
+
+    # Em modo estrito, se falhar em checagem crítica determinística (placeholder, link falso), rejeita de imediato (economiza 1 chamada inteira de LLM)
+    if not is_valid:
+        feedback_det = "Ajustes necessários no currículo: " + "; ".join(critical_issues) + "."
+        return {
+            "reviewer_approved": False,
+            "reviewer_feedback": feedback_det,
+            "review_attempts": attempts + 1,
+            "diagnostic": {
+                "ats_score": diag["ats_score"],
+                "matched_keywords": diag["matched_keywords"],
+                "applied_changes": diag["applied_changes"],
+                "reviewer_summary": feedback_det
+            }
+        }
+
+    # Tier 2: Auditoria semântica fina com LLM apenas se passou no Tier 1
     L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
     try:
         structured_llm = _llm(temperature=0).with_structured_output(ReviewResult)
@@ -353,24 +555,22 @@ def quality_reviewer(state: dict) -> dict:
         result = (prompt | structured_llm).invoke({
             "language": L["name"],
             "base_resume": state.get("base_resume_md", ""),
-            "portfolio_context": _portfolio_context(state, 300),
+            "portfolio_context": _portfolio_context(state, 600),
             "generated": state.get("generated_resume_md", "")
         })
 
-        ats_score = getattr(result, "ats_score", 85)
-        applied_changes = getattr(result, "applied_changes", []) or [
-            "Reestruturação de habilidades técnicas em tabela de 2 colunas",
-            f"Alinhamento de {len(unique_matched)} tecnologias e conceitos da vaga",
-            "Bullets reescritos com verbos de ação e foco em impacto"
-        ]
+        # Combina a nota auditada com a nota de cobertura determinística
+        llm_score = getattr(result, "ats_score", diag["ats_score"])
+        final_ats_score = int(diag["ats_score"] * 0.6 + llm_score * 0.4)
+        applied_changes = getattr(result, "applied_changes", []) or diag["applied_changes"]
 
         return {
             "reviewer_approved": result.approved,
             "reviewer_feedback": result.feedback,
             "review_attempts": attempts + 1,
             "diagnostic": {
-                "ats_score": ats_score,
-                "matched_keywords": unique_matched,
+                "ats_score": final_ats_score,
+                "matched_keywords": diag["matched_keywords"],
                 "applied_changes": applied_changes,
                 "reviewer_summary": result.feedback if result.approved else f"Ajuste sugerido: {result.feedback}"
             }
@@ -384,9 +584,9 @@ def quality_reviewer(state: dict) -> dict:
             "review_attempts": MAX_REVIEW_ATTEMPTS,
             "errors": [f"Revisor de qualidade falhou ({e}); o currículo foi salvo sem revisão automática."],
             "diagnostic": {
-                "ats_score": 75,
-                "matched_keywords": unique_matched,
-                "applied_changes": ["Currículo otimizado com base na descrição da vaga"],
+                "ats_score": diag["ats_score"],
+                "matched_keywords": diag["matched_keywords"],
+                "applied_changes": diag["applied_changes"],
                 "reviewer_summary": f"Auditoria automática não pôde ser concluída ({e})."
             }
         }
@@ -396,7 +596,19 @@ def cover_letter_generator(state: dict) -> dict:
     Gera uma Cover Letter (Carta de Apresentação) personalizada, convincente e alinhada
     com a vaga e o portfólio GitHub, escrita no mesmo idioma da vaga.
     """
-    repos_summary = ", ".join([r.get("name", "") for r in state.get("github_repos", []) if r.get("name")])
+    project_items = []
+    for r in (state.get("github_repos") or [])[:3]:
+        name = r.get("name")
+        if not name:
+            continue
+        lang = r.get("language") or "Multi-stack"
+        desc = (r.get("description") or "").strip()
+        if desc:
+            desc_short = desc[:110] + ("..." if len(desc) > 110 else "")
+            project_items.append(f"- **{name}** ({lang}): {desc_short}")
+        else:
+            project_items.append(f"- **{name}** ({lang})")
+    repos_summary = "\n".join(project_items) if project_items else "Nenhum repositório específico."
     lang_name = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])["name"]
 
     system_prompt = (
