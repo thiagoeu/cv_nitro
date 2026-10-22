@@ -1,6 +1,6 @@
 import re
 import html
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 def format_resume_to_html(markdown_content: str, title: Optional[str] = None) -> str:
     """
@@ -108,7 +108,16 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
 
     flush_table()
 
-    body_content = "\n".join(html_body)
+    def _row_class(item: str) -> str:
+        if any(cls in item for cls in ["candidate-name", "candidate-role", "contact-bar", "section-title", "entry-title", "entry-meta"]):
+            return "print-page-row no-break-after"
+        return "print-page-row"
+
+    # Cada bloco vira uma linha da tabela de paginação: o navegador quebra a página
+    # entre linhas e repete o <thead> (espaçador de topo) em TODAS as páginas.
+    body_content = "\n".join(
+        f"            <tr class='{_row_class(item)}'><td class='print-page-body'>{item}</td></tr>" for item in html_body
+    )
 
     html_template = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -139,25 +148,45 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         }}
         .no-print-bar {{
             max-width: 850px;
-            margin: 0 auto 15px auto;
+            margin: 0 auto 16px auto;
             display: flex;
-            justify-content: flex-end;
-            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            background: #ffffff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+        }}
+        .no-print-info {{
+            font-size: 13px;
+            color: #475569;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }}
         .print-btn {{
-            background-color: #2563eb;
-            color: white;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #ffffff;
             border: none;
-            padding: 8px 16px;
-            font-size: 14px;
-            font-weight: 600;
+            padding: 9px 18px;
+            font-size: 13.5px;
+            font-weight: 700;
             border-radius: 6px;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background 0.2s;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2);
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }}
         .print-btn:hover {{
-            background-color: #1d4ed8;
+            background: linear-gradient(135deg, #059669, #047857);
+            box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+            transform: translateY(-1px);
         }}
         .resume-sheet {{
             background-color: var(--bg-page);
@@ -283,46 +312,387 @@ def format_resume_to_html(markdown_content: str, title: Optional[str] = None) ->
         .bullet-text a:hover {{
             text-decoration: underline;
         }}
+        .no-print-actions {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        .toggle-compact-btn {{
+            background: #475569;
+            color: #ffffff;
+            border: none;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .toggle-compact-btn:hover {{
+            background: #334155;
+        }}
+        /* Modo Compacto para Forçar Caber em 1 Página */
+        body.compact-fit .resume-sheet {{
+            padding: 24px 36px;
+        }}
+        body.compact-fit {{
+            font-size: 12px;
+            line-height: 1.38;
+        }}
+        body.compact-fit .candidate-name {{
+            font-size: 22px;
+            margin-bottom: 1px;
+        }}
+        body.compact-fit .candidate-role {{
+            font-size: 13.5px;
+            margin-bottom: 4px;
+        }}
+        body.compact-fit .contact-bar {{
+            font-size: 11px;
+            margin-bottom: 14px;
+            padding-bottom: 8px;
+        }}
+        body.compact-fit .section-title {{
+            font-size: 13px;
+            margin-top: 12px;
+            margin-bottom: 5px;
+        }}
+        body.compact-fit .paragraph {{
+            font-size: 11.8px;
+            margin-bottom: 6px;
+        }}
+        body.compact-fit .entry-title {{
+            font-size: 12.5px;
+            margin-top: 8px;
+        }}
+        body.compact-fit .entry-meta {{
+            font-size: 11px;
+            margin-bottom: 3px;
+        }}
+        body.compact-fit .bullet-item {{
+            font-size: 11.5px;
+            margin-bottom: 2.5px;
+        }}
+        body.compact-fit .skills-table th,
+        body.compact-fit .skills-table td {{
+            padding: 3px 6px;
+            font-size: 11px;
+        }}
+        @page {{
+            size: A4 portrait;
+            margin: 0;
+        }}
+        .print-page-layout {{
+            width: 100%;
+            border-collapse: collapse;
+            border: none;
+        }}
+        .print-page-layout td {{
+            padding: 0;
+            border: none;
+            vertical-align: top;
+        }}
+        .print-page-header, .print-page-footer {{
+            display: none;
+        }}
+        tr.no-break-after {{
+            page-break-after: avoid;
+            break-after: avoid;
+        }}
         @media print {{
-            body {{
-                background-color: #ffffff;
-                padding: 0;
-                font-size: 11pt;
+            @page {{
+                size: A4 portrait;
+                margin: 0; /* Margem zero: o navegador não escreve data, título, URL nem paginação */
+            }}
+            .print-page-layout {{
+                display: table !important;
+                width: 100% !important;
+                border-collapse: collapse !important;
+            }}
+            .print-page-header {{
+                display: table-header-group !important;
+            }}
+            .print-page-footer {{
+                display: table-footer-group !important;
+            }}
+            .page-top-spacer {{
+                height: 14mm; /* Respiro no topo de TODAS as páginas */
+                visibility: hidden;
+            }}
+            .page-bottom-spacer {{
+                height: 16mm; /* Respiro no rodapé de TODAS as páginas */
+                visibility: hidden;
+            }}
+            body.compact-fit .page-top-spacer {{
+                height: 9mm;
+            }}
+            body.compact-fit .page-bottom-spacer {{
+                height: 11mm;
+            }}
+            .print-page-layout tr {{
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }}
+            tr.no-break-after {{
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }}
+            html, body {{
+                background-color: #ffffff !important;
+                background: #ffffff !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                font-size: 9.8pt; /* Densidade calibrada para priorizar caber na folha sem cortar */
+                line-height: 1.38;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
             }}
             .no-print-bar {{
                 display: none !important;
             }}
             .resume-sheet {{
-                box-shadow: none;
-                border-radius: 0;
-                padding: 0;
-                max-width: 100%;
+                box-shadow: none !important;
+                border: none !important;
+                border-radius: 0 !important;
+                margin: 0 !important;
+                padding: 0 16mm !important; /* Margens laterais */
+                max-width: 100% !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
+            }}
+            .candidate-name {{
+                font-size: 19pt !important;
+                margin-bottom: 1px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }}
+            .candidate-role {{
+                font-size: 11.5pt !important;
+                margin-bottom: 4px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }}
+            .contact-bar {{
+                font-size: 9pt !important;
+                margin-bottom: 10px !important;
+                padding-bottom: 6px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
             }}
             .section-title {{
-                border-bottom: 1.5pt solid #000;
-                color: #000;
-                page-break-after: avoid;
+                font-size: 11pt !important;
+                border-bottom: 1.2pt solid #0f172a !important;
+                color: #0f172a !important;
+                margin-top: 11px !important;
+                margin-bottom: 4px !important;
+                padding-bottom: 2px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }}
+            .paragraph {{
+                font-size: 9.5pt !important;
+                margin-bottom: 6px !important;
+                line-height: 1.38 !important;
+            }}
+            .skills-table-container {{
+                margin-bottom: 8px !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }}
+            .skills-table {{
+                font-size: 9.2pt !important;
+            }}
+            .skills-table th, .skills-table td {{
+                padding: 3.5px 6px !important;
+            }}
+            .skills-table tr {{
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }}
+            .entry-title {{
+                font-size: 10.2pt !important;
+                margin-top: 8px !important;
+                margin-bottom: 1px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }}
+            .entry-meta {{
+                font-size: 9.2pt !important;
+                margin-bottom: 3px !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
             }}
             .bullet-item {{
-                page-break-inside: avoid;
+                font-size: 9.3pt !important;
+                margin-bottom: 2.8px !important;
+                line-height: 1.35 !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
             }}
-            @page {{
-                size: A4;
-                margin: 15mm 18mm;
+            body.compact-fit {{
+                font-size: 9.2pt !important;
+                line-height: 1.32 !important;
+            }}
+            body.compact-fit .section-title {{
+                margin-top: 8px !important;
+                margin-bottom: 3px !important;
+                font-size: 10.5pt !important;
+            }}
+            body.compact-fit .bullet-item {{
+                margin-bottom: 2px !important;
+                font-size: 8.9pt !important;
+            }}
+            body.compact-fit .skills-table th, body.compact-fit .skills-table td {{
+                padding: 2.5px 5px !important;
+                font-size: 8.8pt !important;
+            }}
+            a {{
+                text-decoration: none !important;
+                color: inherit !important;
+            }}
+            a[href]:after {{
+                content: none !important;
             }}
         }}
     </style>
 </head>
 <body>
     <div class="no-print-bar">
-        <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button>
+        <div class="no-print-info">
+            <span>📄 <strong>Folha A4 Pronta para Impressão</strong> (Margens A4 Automáticas)</span>
+        </div>
+        <div class="no-print-actions">
+            <button class="toggle-compact-btn" onclick="document.body.classList.toggle('compact-fit')">📐 Alternar Modo Compacto (1 Folha)</button>
+            <button class="print-btn" onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button>
+        </div>
     </div>
     <div class="resume-sheet">
+        <table class="print-page-layout">
+            <thead class="print-page-header">
+                <tr>
+                    <td>
+                        <div class="page-top-spacer"></div>
+                    </td>
+                </tr>
+            </thead>
+            <tfoot class="print-page-footer">
+                <tr>
+                    <td>
+                        <div class="page-bottom-spacer"></div>
+                    </td>
+                </tr>
+            </tfoot>
+            <tbody>
 {body_content}
+            </tbody>
+        </table>
     </div>
 </body>
 </html>"""
     return html_template
+
+def parse_resume_markdown(markdown_content: str) -> Dict[str, Any]:
+    """
+    Analisa o Markdown do currículo no formato canônico ATS e extrai
+    seus componentes estruturados para permitir edição segura de campos:
+    - name: Nome do candidato (H1)
+    - role: Cargo Alvo (H3 antes das seções)
+    - contact: Linha de contato/links
+    - sections: Lista de seções [{'title': '...', 'content': '...'}]
+    """
+    if not markdown_content:
+        return {"name": "", "role": "", "contact": "", "sections": []}
+
+    lines = markdown_content.splitlines()
+    name = ""
+    role = ""
+    contact = ""
+    sections: List[Dict[str, str]] = []
+    
+    current_sec_title = None
+    current_sec_lines: List[str] = []
+    in_header = True
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        # Detecção de nova seção principal H2
+        if line.startswith("## "):
+            in_header = False
+            if current_sec_title is not None:
+                sections.append({
+                    "title": current_sec_title,
+                    "content": "\n".join(current_sec_lines).strip()
+                })
+            current_sec_title = line[3:].strip()
+            current_sec_lines = []
+            continue
+
+        if in_header:
+            if line.startswith("# ") and not name:
+                name = line[2:].strip()
+                continue
+            if line.startswith("### ") and not role:
+                role = line[4:].strip()
+                continue
+            if ("|" in line or "@" in line) and not line.startswith("|") and not contact:
+                contact = line
+                continue
+            if line and not contact and not name and not role:
+                contact = line
+                continue
+        else:
+            if current_sec_title is not None:
+                current_sec_lines.append(raw_line)
+
+    if current_sec_title is not None:
+        sections.append({
+            "title": current_sec_title,
+            "content": "\n".join(current_sec_lines).strip()
+        })
+
+    return {
+        "name": name,
+        "role": role,
+        "contact": contact,
+        "sections": sections
+    }
+
+def serialize_resume_markdown(data: Dict[str, Any]) -> str:
+    """
+    Serializa os campos estruturados de volta para a especificação canônica
+    Markdown de currículo ATS, mantendo o layout travado e padronizado.
+    """
+    lines: List[str] = []
+    name = (data.get("name") or "").strip()
+    role = (data.get("role") or "").strip()
+    contact = (data.get("contact") or "").strip()
+    sections = data.get("sections") or []
+
+    if name:
+        lines.append(f"# {name}")
+    if role:
+        lines.append(f"### {role}")
+    if contact:
+        lines.append(contact)
+
+    if name or role or contact:
+        lines.append("")
+
+    for sec in sections:
+        title = (sec.get("title") or "").strip()
+        content = (sec.get("content") or "").strip()
+        if title:
+            lines.append(f"## {title}")
+        if content:
+            lines.append(content)
+        lines.append("")
+
+    return "\n".join(lines).strip()
 
 def in_experience_or_projects(body: list) -> bool:
     for item in reversed(body):

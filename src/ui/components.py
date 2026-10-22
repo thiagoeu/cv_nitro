@@ -236,6 +236,60 @@ _CSS = f"""
         justify-content: center;
         box-shadow: 0 2px 4px rgba(15, 23, 42, 0.15);
     }}
+
+    @page {{
+        size: A4 portrait;
+        margin: 0;
+    }}
+
+    /* Regras de impressão limpa da aplicação: oculta navegação, sidebar, botões e rodapé global */
+    @media print {{
+        header,
+        footer,
+        nav,
+        [data-testid="stHeader"],
+        [data-testid="stSidebar"],
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stExpandSidebarButton"],
+        .app-global-footer-wrapper,
+        .app-global-footer,
+        .app-global-footer-content,
+        .stTabs [role="tablist"],
+        button,
+        [data-testid="stButton"],
+        [data-testid="stForm"],
+        [data-testid="stExpander"],
+        .no-print {{
+            display: none !important;
+        }}
+
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMainBlockContainer"],
+        section[data-testid="stMain"],
+        .stApp {{
+            background: #FFFFFF !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+            overflow: visible !important;
+        }}
+
+        @page {{
+            size: A4 portrait;
+            margin: 0;
+        }}
+
+        a {{
+            text-decoration: none !important;
+            color: inherit !important;
+        }}
+
+        a[href]:after {{
+            content: none !important;
+        }}
+    }}
 </style>
 """
 

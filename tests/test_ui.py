@@ -42,6 +42,8 @@ def test_theme_tokens_and_apply_theme():
         css_injected = mock_markdown.call_args[0][0]
         assert "#CBD5E1" in css_injected
         assert "#10B981" in css_injected
+        assert "@media print" in css_injected
+        assert "app-global-footer-wrapper" in css_injected
 
 def test_render_landing_view():
     from src.ui.landing_view import render_landing_view
