@@ -45,7 +45,16 @@ Desenvolvedor Full Stack com sólida experiência no ecossistema Node.js, NestJS
     assert "class='bullet-item'" in html
     assert "@media print" in html
     assert "window.print()" in html
+    assert "margin: 0" in html
+    assert "a[href]:after" in html
     assert "https://github.com/thiagoeu/repo-context" in html
+    assert "<table class=\"print-page-layout\">" in html or "<table class='print-page-layout'>" in html
+    assert "print-page-header" in html
+    assert "print-page-footer" in html
+    assert "page-top-spacer" in html
+    assert "page-bottom-spacer" in html
+    assert "print-page-row" in html
+    assert "no-break-after" in html
 
 def test_format_resume_to_html_xss_sanitization():
     malicious_md = """# <script>alert('pwned')</script>
@@ -98,3 +107,43 @@ Tools | GitHub Actions
     assert "<td class='col-cat'><strong>DevOps &amp; Tools</strong></td>" in html
     # Só a linha do cabeçalho vira barra de contatos
     assert html.count("class='contact-bar'") == 1
+
+def test_parse_and_serialize_resume_markdown():
+    from src.core.resume_formatter import parse_resume_markdown, serialize_resume_markdown
+
+    sample_md = """# Thiago Silva
+### Desenvolvedor Senior
+Campina Grande, PB | thiago@email.com | github.com/thiago
+
+## RESUMO PROFISSIONAL
+Mais de 6 anos de experiência em engenharia de software e microsserviços.
+
+## HABILIDADES TÉCNICAS
+| Categoria | Tecnologias |
+| :--- | :--- |
+| Back-end | Python, NestJS |
+
+## EXPERIÊNCIA PROFISSIONAL
+### Empresa Tech
+*Senior Engineer | 2023 - Presente*
+- ● **Realização:** Otimização de APIs em 40%.
+"""
+    parsed = parse_resume_markdown(sample_md)
+    assert parsed["name"] == "Thiago Silva"
+    assert parsed["role"] == "Desenvolvedor Senior"
+    assert "thiago@email.com" in parsed["contact"]
+    assert len(parsed["sections"]) == 3
+    assert parsed["sections"][0]["title"] == "RESUMO PROFISSIONAL"
+    assert "Mais de 6 anos" in parsed["sections"][0]["content"]
+    assert parsed["sections"][1]["title"] == "HABILIDADES TÉCNICAS"
+    assert parsed["sections"][2]["title"] == "EXPERIÊNCIA PROFISSIONAL"
+
+    # Modifica o cargo e uma seção mantendo o layout travado
+    parsed["role"] = "Tech Lead & AI Engineer"
+    parsed["sections"][0]["content"] = "Resumo atualizado com liderança técnica."
+    
+    serialized = serialize_resume_markdown(parsed)
+    assert "# Thiago Silva" in serialized
+    assert "### Tech Lead & AI Engineer" in serialized
+    assert "## RESUMO PROFISSIONAL\nResumo atualizado com liderança técnica." in serialized
+    assert "## HABILIDADES TÉCNICAS" in serialized
