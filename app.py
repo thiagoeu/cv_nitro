@@ -34,30 +34,29 @@ if is_logout_event:
     # Ação explícita de encerramento de sessão
     st.session_state.user_session = auth_manager.create_guest_session()
     st.session_state.current_page = "landing"
+    st.query_params.pop("action", None)
+    st.query_params.pop("auth_token", None)
 else:
-    # Se a sessão estiver vazia (ex: F5) ou como convidado, tenta restaurar token válido
+    # Se a sessão estiver vazia (ex: F5) ou como convidado, tenta restaurar token válido do handshake
     if "user_session" not in st.session_state or st.session_state.user_session.get("is_guest", True):
         if auth_token:
             restored_user = auth_manager.restore_session_from_token(auth_token)
             if restored_user:
                 st.session_state.user_session = restored_user
             else:
-                st.query_params.pop("auth_token", None)
                 st.session_state.user_session = auth_manager.create_guest_session()
+            # Remove o token da URL imediatamente para nunca ficar exposto ao usuário
+            st.query_params.pop("auth_token", None)
         else:
             st.session_state.user_session = auth_manager.create_guest_session()
 
 session = st.session_state.get("user_session", {})
 is_guest = session.get("is_guest", True)
 
-# Mantém o token assinado na URL para permitir recarregamento (F5) sem desconectar
+# Token assinado obtido da sessão para manter o localStorage sincronizado sem expor na URL
 active_token = None
 if not is_guest and session.get("is_authenticated", False):
-    if not auth_token or not auth_manager.restore_session_from_token(auth_token):
-        active_token = auth_manager.create_session_token(session)
-        st.query_params["auth_token"] = active_token
-    else:
-        active_token = auth_token
+    active_token = auth_manager.create_session_token(session)
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "landing" if is_guest else "dashboard"
@@ -118,7 +117,7 @@ def main():
     # Sincronização em segundo plano com o localStorage e cookie do navegador
     curr_session = st.session_state.get("user_session", {})
     curr_guest = curr_session.get("is_guest", True)
-    curr_token = st.query_params.get("auth_token") if not curr_guest else None
+    curr_token = active_token if not curr_guest else None
     render_storage_sync(token=curr_token, is_logout=is_logout_event)
 
     if is_logout_event:

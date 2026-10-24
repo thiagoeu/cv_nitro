@@ -81,6 +81,5 @@ def test_login_success_stores_auth_token():
         
         auth_views.render_login_view()
         assert st.session_state.user_session["user_id"] == "usr_abc"
-        assert "auth_token" in st.query_params
-        assert "." in st.query_params["auth_token"]
+        assert "auth_token" not in st.query_params
         mock_set_page.assert_called_with("dashboard")
