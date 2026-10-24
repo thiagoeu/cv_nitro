@@ -424,11 +424,11 @@ def render_footer():
 
 def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
     """
-    Sincroniza a credencial de sessão com o localStorage e cookie do navegador via iframe.
-    - Se autenticado: grava o token assinado no localStorage e cookie.
-    - Se logout: remove o token do localStorage e cookie.
-    - Se visitante sem parâmetros: detecta se existe token salvo no localStorage/cookie e restaura
-      a sessão automaticamente via URL.
+    Sincroniza a credencial de sessão com o localStorage e cookie do navegador via iframe,
+    garantindo que o token NÃO fique visível na URL para o usuário.
+    - Se autenticado: grava o token assinado no localStorage e limpa resquícios da URL.
+    - Se logout: remove o token do localStorage e limpa a URL.
+    - Se visitante em recarregamento: detecta o token salvo no localStorage e restaura a sessão.
     """
     import streamlit.components.v1 as components
     clean_token = token or ""
@@ -442,6 +442,18 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
             var win = window.parent || window;
             var activeToken = "{clean_token}";
             var isLogout = {logout_flag};
+
+            // 1. Limpeza estética e de privacidade: limpa auth_token da barra de endereço imediatamente
+            try {{
+                if (win.location.search && win.location.search.indexOf("auth_token=") !== -1) {{
+                    var cleanSearch = win.location.search
+                        .replace(/[?&]auth_token=[^&]+/, '')
+                        .replace(/^&/, '?');
+                    if (cleanSearch === '?') cleanSearch = '';
+                    var cleanUrl = win.location.pathname + cleanSearch + win.location.hash;
+                    win.history.replaceState(null, '', cleanUrl);
+                }}
+            }} catch(e) {{}}
 
             if (isLogout) {{
                 try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
@@ -470,7 +482,7 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
                     var isLogoutParam = loc.search && loc.search.indexOf("action=logout") !== -1;
                     if (!hasTokenParam && !isLogoutParam) {{
                         var joinChar = loc.search ? "&" : "?";
-                        loc.href = loc.pathname + loc.search + joinChar + "auth_token=" + encodeURIComponent(savedToken);
+                        loc.replace(loc.pathname + loc.search + joinChar + "auth_token=" + encodeURIComponent(savedToken));
                     }}
                 }}
             }}

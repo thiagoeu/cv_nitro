@@ -42,7 +42,7 @@ def render_login_view(on_success_callback: Optional[Callable] = None):
                     if res["success"]:
                         st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
-                        st.query_params["auth_token"] = auth_manager.create_session_token(res["user"])
+                        st.query_params.pop("auth_token", None)
                         if on_success_callback:
                             on_success_callback()
                         st.toast(f"Bem-vindo(a) de volta, {res['user']['display_name']}!")
@@ -98,7 +98,7 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
                     if res["success"]:
                         st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
-                        st.query_params["auth_token"] = auth_manager.create_session_token(res["user"])
+                        st.query_params.pop("auth_token", None)
                         if on_success_callback:
                             on_success_callback()
                         st.toast(res.get("message", "Conta criada com sucesso!"))
