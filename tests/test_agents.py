@@ -108,3 +108,67 @@ def test_quality_reviewer_strict_mode_with_diagnostic():
 def test_build_graph_compiles_successfully():
     graph = build_graph()
     assert graph is not None
+
+def test_graph_topology_fan_out_and_scatter_gather():
+    graph = build_graph()
+    inner_graph = graph.get_graph()
+    edge_pairs = {(e.source, e.target) for e in inner_graph.edges}
+    
+    # 1. Fan-out inicial do START
+    assert ("__start__", "job_analyzer") in edge_pairs
+    assert ("__start__", "github_fetcher") in edge_pairs
+    
+    # 2. Convergência Scatter-Gather para relevance_ranker
+    assert ("job_analyzer", "relevance_ranker") in edge_pairs
+    assert ("github_fetcher", "relevance_ranker") in edge_pairs
+    
+    # 3. Continuidade para o gerador
+    assert ("relevance_ranker", "resume_generator") in edge_pairs
+
+def test_graph_execution_scatter_gather_merging():
+    """
+    Valida que as ramificações paralelas executam e mesclam suas saídas de estado
+    ('job_technologies' do job_analyzer e 'raw_github_repos' do github_fetcher)
+    corretamente no nó de convergência relevance_ranker.
+    """
+    initial_state = GraphState(
+        job_description="Desenvolvedor Python",
+        base_resume_md="# Candidato",
+        github_username="testuser",
+        job_url=None,
+        job_keywords=[],
+        job_technologies=[],
+        job_language="pt",
+        github_repos=[],
+        github_readmes={},
+        generated_resume_md=None,
+        generated_cover_letter_md=None,
+        reviewer_feedback=None,
+        reviewer_approved=False,
+        review_attempts=0,
+        strict_review=False,
+        generate_cover_letter=False
+    )
+    
+    with patch("src.agents.graph.job_analyzer") as mock_ja, \
+         patch("src.agents.graph.github_fetcher") as mock_gf, \
+         patch("src.agents.graph.relevance_ranker") as mock_rr, \
+         patch("src.agents.graph.resume_generator") as mock_rg, \
+         patch("src.agents.graph.quality_reviewer") as mock_qr:
+         
+        mock_ja.return_value = {"job_technologies": ["Python", "FastAPI"], "job_keywords": ["Backend"]}
+        mock_gf.return_value = {"raw_github_repos": [{"name": "repo1", "fork": False}]}
+        mock_rr.return_value = {"github_repos": [{"name": "repo1"}], "github_readmes": {}}
+        mock_rg.return_value = {"generated_resume_md": "# Currículo Otimizado"}
+        mock_qr.return_value = {"reviewer_approved": True, "review_attempts": 1, "diagnostic": {}}
+        
+        graph = build_graph()
+        result = graph.invoke(initial_state)
+        
+        # Garante que ambos os ramos foram acionados
+        assert mock_ja.called
+        assert mock_gf.called
+        assert mock_rr.called
+        assert result["generated_resume_md"] == "# Currículo Otimizado"
+        assert result["reviewer_approved"] is True
+

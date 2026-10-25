@@ -106,3 +106,24 @@ def test_session_token_empty_or_guest_rejected():
     guest_user = {"user_id": "guest_local", "email": "visitante@local"}
     guest_token = auth_manager.create_session_token(guest_user)
     assert auth_manager.restore_session_from_token(guest_token) is None
+
+def test_session_token_url_encoded_and_unicode():
+    import urllib.parse
+    user = {
+        "user_id": "uuid-thiago-2026",
+        "email": "barbosa.araujo@academico.ifpb.edu.br",
+        "display_name": "Thiago Barbosa de Araújo",
+        "access_token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.dummy_access_token_value"
+    }
+    token = auth_manager.create_session_token(user)
+    # Simula como o cookie armazena (com encodeURIComponent / quote e aspas)
+    encoded_cookie = f'"{urllib.parse.quote(token)}"'
+    clean = urllib.parse.unquote(encoded_cookie.strip('"'))
+    restored = auth_manager.restore_session_from_token(clean)
+    assert restored is not None
+    assert restored["user_id"] == "uuid-thiago-2026"
+    assert restored["email"] == "barbosa.araujo@academico.ifpb.edu.br"
+    assert restored["display_name"] == "Thiago Barbosa de Araújo"
+    assert restored["is_authenticated"] is True
+    assert restored["is_guest"] is False
+

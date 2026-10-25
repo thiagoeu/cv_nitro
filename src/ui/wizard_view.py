@@ -103,16 +103,45 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
             strict_review=strict_rev
         )
 
-        with st.status("Executando fluxo multi-agente...", expanded=True) as status:
-            st.write("Analisando a vaga e identificando palavras-chave e idioma...")
+        NODE_STATUS_LABELS = {
+            "job_analyzer": "🎯 Análise da vaga e extração de requisitos concluída",
+            "github_fetcher": "🐙 Repositórios públicos consultados no GitHub",
+            "relevance_ranker": "⚡ Ranqueamento determinístico de relevância do portfólio",
+            "resume_generator": "✍️ Redação executiva do currículo de alta fidelidade",
+            "section_patcher": "🩹 Refinamento cirúrgico de seção concluído",
+            "quality_reviewer": "🔍 Auditoria de qualidade e conformidade ATS",
+            "cover_letter_generator": "✉️ Redação personalizada da Carta de Apresentação"
+        }
+
+        final_state = dict(initial_state)
+
+        with st.status("Executando pipeline multi-agente em tempo real...", expanded=True) as status:
+            st.write("🚀 Iniciando grafo multi-agente...")
+            preview_placeholder = st.empty()
             try:
-                final_state = graph.invoke(initial_state)
+                if hasattr(graph, "stream"):
+                    for event in graph.stream(initial_state, stream_mode="updates"):
+                        for node_name, node_update in event.items():
+                            if isinstance(node_update, dict):
+                                final_state.update(node_update)
+                            
+                            label = NODE_STATUS_LABELS.get(node_name, f"Etapa {node_name} concluída.")
+                            st.write(label)
+
+                            current_md = final_state.get("generated_resume_md")
+                            if node_name in ["resume_generator", "section_patcher"] and current_md:
+                                with preview_placeholder.container():
+                                    st.caption("📄 *Prévia em tempo real do currículo gerado:*")
+                                    st.markdown(current_md)
+                else:
+                    final_state = graph.invoke(initial_state)
+
+                status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
             except Exception as e:
-                status.update(label="Falha na execução", state="error", expanded=True)
+                status.update(label="Falha na execução do pipeline", state="error", expanded=True)
                 st.session_state.wizard_errors = [f"Erro durante a execução do grafo: {e}"]
                 st.rerun()
                 return
-            status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
 
         saved_path = history_manager.save_resume(
             job_title=job_title.strip(),

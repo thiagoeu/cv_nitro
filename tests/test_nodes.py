@@ -2,6 +2,8 @@ from unittest.mock import patch, MagicMock
 from src.agents.nodes import (
     job_analyzer,
     github_researcher,
+    github_fetcher,
+    relevance_ranker,
     resume_generator,
     quality_reviewer,
     cover_letter_generator
@@ -10,7 +12,7 @@ from src.agents.graph import route_after_review
 from src.agents.state import GraphState
 import os
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 # Dummy fallback API key for testing structural parsing
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "dummy")
@@ -206,6 +208,7 @@ def test_resume_generator_prompt_in_job_language():
         assert "TRADUZA" in system_prompt
         assert "HABILIDADES TÉCNICAS" not in system_prompt
         assert "| Categoria |" not in system_prompt
+        assert "PRIMEIRA PESSOA" in system_prompt
         assert result["generated_resume_md"] == "# Fulano"
 
 def test_resume_generator_uses_job_summary():
@@ -214,7 +217,9 @@ def test_resume_generator_uses_job_summary():
     with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_llm_cls.return_value.invoke.return_value = AIMessage(content="# Fulano")
         resume_generator(state)
-        user_prompt = mock_llm_cls.return_value.invoke.call_args.args[0][1].content
+        # Mensagens: [0] SystemMessage (Regras ATS), [1] HumanMessage (Currículo Base), [2] HumanMessage (Vaga)
+        user_messages = [m.content for m in mock_llm_cls.return_value.invoke.call_args.args[0] if isinstance(m, HumanMessage)]
+        user_prompt = " ".join(user_messages)
         assert "Senior React engineer" in user_prompt
         assert "React, ownership" in user_prompt
         assert "Great Place to Work" not in user_prompt
@@ -262,3 +267,134 @@ def test_llm_falls_back_to_groq_on_quota(monkeypatch):
     with patch("src.agents.nodes.ChatGoogleGenerativeAI", return_value=RunnableLambda(quota)), \
          patch("src.agents.nodes.ChatGroq", return_value=RunnableLambda(lambda _: "groq")):
         assert _llm(0).invoke("oi") == "groq"
+
+def test_github_fetcher_success():
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
+        {"name": "repo1", "fork": False},
+        {"name": "repo2", "fork": True}
+    ]
+    with patch("requests.get", return_value=mock_resp):
+        res = github_fetcher({"github_username": "octocat"})
+        assert len(res["raw_github_repos"]) == 2
+        assert res["raw_github_repos"][0]["name"] == "repo1"
+
+def test_relevance_ranker_deterministic_ordering():
+    raw_repos = [
+        {
+            "name": "forked-repo",
+            "fork": True,
+            "language": "Python",
+            "description": "A fork",
+            "stargazers_count": 100
+        },
+        {
+            "name": "python-fastapi-service",
+            "fork": False,
+            "language": "Python",
+            "topics": ["fastapi", "backend"],
+            "description": "A high-performance FastAPI microservice",
+            "stargazers_count": 10,
+            "updated_at": "2026-01-01T00:00:00Z"
+        },
+        {
+            "name": "ruby-app",
+            "fork": False,
+            "language": "Ruby",
+            "topics": ["rails"],
+            "description": "Rails ecommerce application",
+            "stargazers_count": 5,
+            "updated_at": "2026-01-02T00:00:00Z"
+        },
+        {
+            "name": "python-script",
+            "fork": False,
+            "language": "Python",
+            "topics": [],
+            "description": "Small utility script",
+            "stargazers_count": 0,
+            "updated_at": "2025-01-01T00:00:00Z"
+        }
+    ]
+
+    state = {
+        "github_username": "octocat",
+        "job_technologies": ["Python", "FastAPI"],
+        "raw_github_repos": raw_repos
+    }
+
+    mock_readme_resp = MagicMock()
+    mock_readme_resp.status_code = 404
+
+    with patch("requests.get", return_value=mock_readme_resp):
+        res = relevance_ranker(state)
+        selected = res["github_repos"]
+        assert len(selected) <= 3
+        # python-fastapi-service deve vir em 1º lugar absoluto por bater language + topic + description
+        assert selected[0]["name"] == "python-fastapi-service"
+        assert selected[0]["relevance_score"] > selected[1]["relevance_score"]
+        # Forked repo não deve ser o primeiro
+        assert "forked-repo" not in [s["name"] for s in selected]
+
+def test_resume_generator_with_tool_calling():
+    """
+    Testa o fluxo em que o LLM recebe a tool get_repo_deep_dive, emite uma tool_call
+    para detalhar um projeto, e gera o currículo incorporando os detalhes retornados.
+    """
+    state = _en_state(
+        github_repos=[{"name": "nitro-app", "url": "https://github.com/test/nitro-app", "language": "Python", "description": "Nitro App", "relevance_score": 8.0}],
+        github_readmes={"nitro-app": "## Arquitetura\nMicrosserviço de alta concorrência em FastAPI."}
+    )
+
+    from langchain_core.messages import AIMessage
+
+    mock_llm = MagicMock()
+    # 1ª resposta com tool call
+    resp_with_tool_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "get_repo_deep_dive", "args": {"repo_name": "nitro-app"}, "id": "call_abc123"}]
+    )
+    # 2ª resposta após receber a ToolMessage com o README
+    final_resp = AIMessage(content="# Candidato Otimizado com Detalhes da Tool")
+
+    mock_bound = MagicMock()
+    mock_bound.invoke.return_value = resp_with_tool_call
+    mock_llm.bind_tools.return_value = mock_bound
+    # O mock_llm base deve ser chamado na segunda rodada com as mensagens acumuladas
+    mock_llm.invoke.return_value = final_resp
+
+    with patch("src.agents.nodes._llm", return_value=mock_llm):
+        result = resume_generator(state)
+        assert result["generated_resume_md"] == "# Candidato Otimizado com Detalhes da Tool"
+        assert mock_bound.invoke.called
+        assert mock_llm.invoke.called
+        # Verifica que a 2ª chamada incluiu a ToolMessage com o extrato técnico
+        second_call_messages = mock_llm.invoke.call_args[0][0]
+        tool_msg = [m for m in second_call_messages if hasattr(m, "tool_call_id") and m.tool_call_id == "call_abc123"]
+        assert len(tool_msg) == 1
+        assert "FastAPI" in tool_msg[0].content
+
+def test_resume_generator_fallback_on_unsupported_tools():
+    """
+    Testa o fallback defensivo quando o modelo ou provedor falha ao chamar bind_tools.
+    Garante que o portfólio completo com READMEs seja injetado no prompt sem quebrar o fluxo.
+    """
+    state = _en_state(
+        github_repos=[{"name": "nitro-app", "url": "https://github.com/test/nitro-app", "language": "Python", "description": "Nitro App", "relevance_score": 8.0}],
+        github_readmes={"nitro-app": "Extrato de contingência"}
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.bind_tools.side_effect = NotImplementedError("Provedor não suporta tools")
+    mock_llm.invoke.return_value = AIMessage(content="# Currículo Gerado via Fallback Defensivo")
+
+    with patch("src.agents.nodes._llm", return_value=mock_llm):
+        result = resume_generator(state)
+        assert result["generated_resume_md"] == "# Currículo Gerado via Fallback Defensivo"
+        # Verifica que no fallback o portfólio foi injetado nas mensagens
+        fallback_messages = mock_llm.invoke.call_args[0][0]
+        combined_text = " ".join([m.content for m in fallback_messages if isinstance(m, HumanMessage)])
+        assert "Extrato de contingência" in combined_text
+
+
