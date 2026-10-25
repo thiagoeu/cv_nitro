@@ -14,7 +14,8 @@ class GraphState(TypedDict):
     job_language: Optional[str]  # ex: 'en', 'pt', 'es'
     job_summary: Optional[str]  # versão enxuta da vaga usada pelas etapas seguintes
     
-    # Processado pelo GitHub Researcher
+    # Processado pelo GitHub Fetcher / Researcher
+    raw_github_repos: Optional[List[Dict[str, Any]]]
     github_repos: List[Dict[str, Any]]
     github_readmes: Dict[str, str]  # repo_name -> readme_content
     
@@ -32,6 +33,9 @@ class GraphState(TypedDict):
     reviewer_feedback: Optional[str]
     reviewer_approved: bool
     review_attempts: int
+    review_severity: Optional[str]  # 'approved', 'minor', 'major'
+    patch_section: Optional[str]    # Seção para refinamento cirúrgico
+    patch_instruction: Optional[str]# Instrução direcionada ao section_patcher
     diagnostic: Optional[Dict[str, Any]]
 
     # Falhas não fatais (revisor, carta) acumuladas para o app avisar o usuário

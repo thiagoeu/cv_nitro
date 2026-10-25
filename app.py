@@ -37,10 +37,21 @@ if is_logout_event:
     st.query_params.pop("action", None)
     st.query_params.pop("auth_token", None)
 else:
-    # Se a sessão estiver vazia (ex: F5) ou como convidado, tenta restaurar token válido do handshake
+    # Se a sessão estiver vazia (ex: F5) ou como convidado, tenta restaurar token do cookie ou da URL
     if "user_session" not in st.session_state or st.session_state.user_session.get("is_guest", True):
-        if auth_token:
-            restored_user = auth_manager.restore_session_from_token(auth_token)
+        # 1. Recupera primeiro dos cookies HTTP nativos (enviados no header pelo navegador no F5)
+        raw_cookie_token = None
+        if hasattr(st, "context") and hasattr(st.context, "cookies"):
+            try:
+                raw_cookie_token = st.context.cookies.get("cv_nitro_auth_token")
+            except Exception:
+                raw_cookie_token = None
+
+        token_to_restore = auth_token or raw_cookie_token
+        if token_to_restore:
+            import urllib.parse
+            clean_token = urllib.parse.unquote(str(token_to_restore).strip('"'))
+            restored_user = auth_manager.restore_session_from_token(clean_token)
             if restored_user:
                 st.session_state.user_session = restored_user
             else:

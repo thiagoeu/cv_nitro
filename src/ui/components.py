@@ -139,15 +139,20 @@ _CSS = f"""
         box-sizing: border-box;
     }}
 
-    /* Oculta iframe de sincronização de storage para evitar layout shift */
-    iframe[height="0"] {{
-        display: none !important;
+    /* Oculta iframe de sincronização de storage sem desativar a execução do script */
+    iframe[height="0"],
+    iframe[title*="streamlit.components"] {{
+        visibility: hidden !important;
+        opacity: 0 !important;
         position: absolute !important;
-        height: 0 !important;
-        width: 0 !important;
+        left: -9999px !important;
+        top: -9999px !important;
+        width: 1px !important;
+        height: 1px !important;
         border: none !important;
         margin: 0 !important;
         padding: 0 !important;
+        pointer-events: none !important;
     }}
 
     /* Títulos em Azul Noturno com peso forte */
@@ -425,10 +430,10 @@ def render_footer():
 def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
     """
     Sincroniza a credencial de sessão com o localStorage e cookie do navegador via iframe,
-    garantindo que o token NÃO fique visível na URL para o usuário.
-    - Se autenticado: grava o token assinado no localStorage e limpa resquícios da URL.
-    - Se logout: remove o token do localStorage e limpa a URL.
-    - Se visitante em recarregamento: detecta o token salvo no localStorage e restaura a sessão.
+    garantindo que o token NÃO fique visível na URL para o usuário e sobreviva ao F5.
+    - Se autenticado: grava o token assinado no localStorage e no cookie.
+    - Se logout: remove o token do localStorage e expira o cookie.
+    - Se visitante em recarregamento: detecta o token salvo e sincroniza com o backend.
     """
     import streamlit.components.v1 as components
     clean_token = token or ""
@@ -443,7 +448,7 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
             var activeToken = "{clean_token}";
             var isLogout = {logout_flag};
 
-            // 1. Limpeza estética e de privacidade: limpa auth_token da barra de endereço imediatamente
+            // 1. Limpeza estética e de privacidade: limpa resquícios de auth_token da barra de endereço
             try {{
                 if (win.location.search && win.location.search.indexOf("auth_token=") !== -1) {{
                     var cleanSearch = win.location.search
@@ -458,12 +463,15 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
             if (isLogout) {{
                 try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
                 try {{ window.localStorage.removeItem(storageKey); }} catch(e) {{}}
-                try {{ win.document.cookie = storageKey + "=; path=/; max-age=0"; }} catch(e) {{}}
-                try {{ document.cookie = storageKey + "=; path=/; max-age=0"; }} catch(e) {{}}
+                try {{ win.sessionStorage.removeItem("auth_restore_attempted"); }} catch(e) {{}}
+                try {{ win.document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
+                try {{ document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
             }} else if (activeToken && activeToken.length > 10) {{
                 try {{ win.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
                 try {{ window.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
+                try {{ win.sessionStorage.removeItem("auth_restore_attempted"); }} catch(e) {{}}
                 try {{ win.document.cookie = storageKey + "=" + encodeURIComponent(activeToken) + "; path=/; max-age=2592000; SameSite=Lax"; }} catch(e) {{}}
+                try {{ document.cookie = storageKey + "=" + encodeURIComponent(activeToken) + "; path=/; max-age=2592000; SameSite=Lax"; }} catch(e) {{}}
             }} else {{
                 var savedToken = null;
                 try {{ savedToken = win.localStorage.getItem(storageKey); }} catch(e) {{}}
@@ -476,13 +484,32 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
                         if (match) savedToken = decodeURIComponent(match[2]);
                     }} catch(e) {{}}
                 }}
-                var loc = win.location;
+
                 if (savedToken && savedToken.length > 10) {{
-                    var hasTokenParam = loc.search && loc.search.indexOf("auth_token=") !== -1;
-                    var isLogoutParam = loc.search && loc.search.indexOf("action=logout") !== -1;
-                    if (!hasTokenParam && !isLogoutParam) {{
-                        var joinChar = loc.search ? "&" : "?";
-                        loc.replace(loc.pathname + loc.search + joinChar + "auth_token=" + encodeURIComponent(savedToken));
+                    // Garante que o cookie esteja definido para as próximas requisições HTTP (F5)
+                    try {{
+                        win.document.cookie = storageKey + "=" + encodeURIComponent(savedToken) + "; path=/; max-age=2592000; SameSite=Lax";
+                    }} catch(e) {{}}
+
+                    var attemptKey = "auth_restore_attempted";
+                    var lastAttempt = null;
+                    try {{ lastAttempt = win.sessionStorage.getItem(attemptKey); }} catch(e) {{}}
+
+                    if (lastAttempt !== savedToken) {{
+                        try {{ win.sessionStorage.setItem(attemptKey, savedToken); }} catch(e) {{}}
+                        // Injeta script no documento pai para reload seguro sem violar sandboxing do iframe
+                        try {{
+                            var s = win.document.createElement("script");
+                            s.textContent = "window.location.reload();";
+                            win.document.head.appendChild(s);
+                            s.remove();
+                        }} catch(e) {{
+                            try {{ win.location.reload(); }} catch(err) {{}}
+                        }}
+                    }} else {{
+                        // Se já tentou e continuou deslogado no servidor, o token está expirado/inválido: limpa para evitar loops
+                        try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
+                        try {{ win.document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
                     }}
                 }}
             }}

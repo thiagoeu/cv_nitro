@@ -2,7 +2,7 @@ import pytest
 import streamlit as st
 from unittest.mock import patch, MagicMock
 import app
-from src.ui import dashboard_view, applications_view
+from src.ui import dashboard_view, applications_view, wizard_view
 
 def mock_columns(spec, *args, **kwargs):
     count = spec if isinstance(spec, int) else len(spec)
@@ -219,4 +219,95 @@ def test_application_view_edit_cover_letter():
         assert mock_toast.called
         assert mock_rerun.called
         assert st.session_state.viewing_history == "history/saved_app.md"
+
+def test_wizard_view_streaming_success():
+    st.session_state.clear()
+    st.session_state.user_session = {
+        "user_id": "usr-wizard-1",
+        "email": "dev@test.com",
+        "is_guest": False
+    }
+
+    mock_graph = MagicMock()
+    # Emite eventos simulando streaming do grafo
+    stream_events = [
+        {"job_analyzer": {"job_keywords": ["FastAPI"], "job_technologies": ["Python"], "job_language": "pt"}},
+        {"github_fetcher": {"raw_github_repos": [{"name": "fastapi-core"}]}},
+        {"relevance_ranker": {"github_repos": [{"name": "fastapi-core"}]}},
+        {"resume_generator": {"generated_resume_md": "# Currículo em Streaming"}},
+        {"quality_reviewer": {"reviewer_approved": True, "diagnostic": {"ats_score": 90}}}
+    ]
+    mock_graph.stream.return_value = iter(stream_events)
+
+    def fake_button(label, **kwargs):
+        return "Gerar currículo otimizado" in label
+
+    def fake_text_input(label, **kwargs):
+        if "Título" in label:
+            return "Desenvolvedor Backend Python"
+        if "Link" in label:
+            return "https://vaga.com/1"
+        return "candidato-github"
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.text_input", side_effect=fake_text_input), \
+         patch("streamlit.text_area", return_value="Requisitos: Python, FastAPI e microsserviços"), \
+         patch("src.ui.components.resume_input", return_value="# Meu Currículo Base"), \
+         patch("src.core.profile_manager.get_user_profile", return_value={"base_resume": "# Base", "github_username": "candidato"}), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.status") as mock_status, \
+         patch("streamlit.empty") as mock_empty, \
+         patch("streamlit.markdown"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.rerun") as mock_rerun, \
+         patch("src.core.history_manager.save_resume", return_value="history/saved_streaming.md") as mock_save:
+
+        wizard_view.render_wizard_view(graph=mock_graph)
+
+        assert mock_graph.stream.called
+        assert mock_graph.stream.call_args[1]["stream_mode"] == "updates"
+        assert mock_save.called
+        save_kwargs = mock_save.call_args[1]
+        assert save_kwargs["content"] == "# Currículo em Streaming"
+        assert save_kwargs["job_title"] == "Desenvolvedor Backend Python"
+        assert st.session_state.current_page == "applications"
+        assert mock_rerun.called
+
+def test_wizard_view_streaming_exception_handling():
+    st.session_state.clear()
+    st.session_state.user_session = {
+        "user_id": "usr-wizard-err",
+        "email": "err@test.com",
+        "is_guest": False
+    }
+
+    mock_graph = MagicMock()
+    # Simula falha catastrófica durante o streaming
+    mock_graph.stream.side_effect = RuntimeError("Erro de conexão com cluster de LLM")
+
+    def fake_button(label, **kwargs):
+        return "Gerar currículo otimizado" in label
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.text_input", return_value="Dev"), \
+         patch("streamlit.text_area", return_value="Desc"), \
+         patch("src.ui.components.resume_input", return_value="Base"), \
+         patch("src.core.profile_manager.get_user_profile", return_value={}), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.status"), \
+         patch("streamlit.empty"), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.rerun") as mock_rerun:
+
+        wizard_view.render_wizard_view(graph=mock_graph)
+
+        assert "wizard_errors" in st.session_state
+        assert any("Erro durante a execução do grafo" in err for err in st.session_state.wizard_errors)
+        assert mock_rerun.called
+
 
