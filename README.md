@@ -206,8 +206,8 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
 
 ### 1. Autenticação Segura & Sessão Persistente
 - **Login e Cadastro com Supabase Auth:** Suporte a criação de contas com e-mail e senha com validações completas.
-- **Modo Convidado (*Guest Local*):** Usuários não cadastrados podem testar a aplicação livremente com armazenamento local.
-- **Sessão Persistente contra F5:** Tokens assinados integrados ao `localStorage` evitam que o recarregamento de página (F5) derrube a sessão do usuário.
+- **Modo Local de Desenvolvimento:** Sem Supabase configurado, qualquer e-mail entra sem verificação de senha (aviso visível nas telas de login/cadastro); cada e-mail recebe um `user_id` próprio, com histórico e perfil isolados. Use apenas localmente.
+- **Sessão Persistente contra F5:** Um cookie assinado por HMAC (`AUTH_SECRET_KEY`), com expiração de 30 dias e sem tokens do provedor, mantém a sessão ao recarregar a página. Após *Sair*, a sessão só volta com um novo login.
 
 ### 2. Gestão de Perfil do Candidato
 - **Armazenamento Permanente de Dados:** Salve seu currículo base, nome completo e usuário do GitHub uma única vez no painel **Perfil**.
@@ -253,8 +253,16 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
 
 Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (o disco local é resetado em novos deploys). Para garantir a integridade dos dados:
 
-- **Persistência em Nuvem (Supabase):** Quando configurado com `SUPABASE_URL` e `SUPABASE_KEY`, todas as candidaturas, perfis e diagnósticos são gravados em tabelas PostgreSQL com políticas de segurança RLS (*Row Level Security*).
-- **Fallback Local Automático:** Sem as credenciais de nuvem, o sistema grava automaticamente arquivos Markdown estruturados no diretório `history/`, mantendo o app 100% funcional offline.
+- **Persistência em Nuvem (Supabase):** Quando configurado com `SUPABASE_URL`, `SUPABASE_KEY` (anon, só para login/cadastro) e `SUPABASE_SERVICE_ROLE_KEY` (dados, só no servidor), todas as candidaturas e perfis são gravados no PostgreSQL vinculados ao `user_id`. O servidor filtra toda leitura, gravação e exclusão pelo dono da sessão; o RLS fecha as tabelas para a chave anon pública. Se uma gravação na nuvem falhar, a candidatura fica salva localmente e a interface avisa que ela não foi sincronizada.
+- **Fallback Local Automático:** Sem as credenciais de nuvem, o sistema grava automaticamente arquivos Markdown estruturados no diretório `history/` (fora do git), mantendo o app 100% funcional offline. Cada usuário vê apenas os próprios arquivos.
+
+### Migração do Banco (RLS e dono obrigatório)
+
+1. Abra o **SQL Editor** do painel do Supabase, cole o conteúdo de `supabase_schema.sql` e clique em *Run*. O script é idempotente.
+2. Confirme que a chave anon não lê nada: `curl "$SUPABASE_URL/rest/v1/applications?select=id" -H "apikey: $SUPABASE_KEY"` deve retornar `[]`.
+3. **Registros antigos sem dono** deixam de aparecer no app. Para recuperá-los:
+   - no Supabase: `UPDATE public.applications SET user_id = '<uuid-do-usuario>' WHERE user_id IS NULL;`
+   - em arquivos locais de `history/`: acrescente `"user_id": "<id-do-usuario>"` ao cabeçalho JSON do arquivo.
 
 ---
 
@@ -383,6 +391,10 @@ cp .env.example .env
 
 Preencha as chaves no arquivo `.env`:
 ```env
+# Assinatura do cookie de sessão (Obrigatório: o app não inicia sem ela)
+# Gere com: python -c "import secrets; print(secrets.token_urlsafe(48))"
+AUTH_SECRET_KEY=sua_chave_secreta_aqui
+
 # Google AI Studio (Obrigatório)
 GEMINI_API_KEY=sua_chave_gemini_aqui
 GEMINI_MODEL=gemini-2.0-flash-lite
@@ -395,9 +407,12 @@ GROQ_MODEL=openai/gpt-oss-120b
 # Token do GitHub (Opcional, evita limite de 60 req/hora)
 GITHUB_TOKEN=seu_github_token_aqui
 
-# Supabase (Opcional: deixe em branco para persistência local em history/)
+# Supabase (Opcional: as três juntas ativam o modo nuvem; faltando qualquer uma, tudo fica local em history/)
 SUPABASE_URL=https://seu-projeto.supabase.co
+# Chave anon (pública): usada apenas para login e cadastro
 SUPABASE_KEY=sua_chave_publica_anon
+# Chave service role (SEGREDO: só no servidor, nunca no navegador nem no git)
+SUPABASE_SERVICE_ROLE_KEY=sua_chave_service_role
 ```
 
 ### 4. Iniciar a Aplicação

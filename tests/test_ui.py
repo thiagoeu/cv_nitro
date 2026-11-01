@@ -22,6 +22,15 @@ def test_diagnostic_panel_with_data():
         assert mock_metric.called
         assert mock_info.called
 
+def test_diagnostic_panel_shows_run_warnings():
+    diagnostic = {"ats_score": 70, "run_warnings": ["GitHub indisponível", "Carta de apresentação não foi gerada"]}
+    with patch("streamlit.metric"), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.columns", side_effect=lambda spec: [MagicMock() for _ in range(len(spec) if isinstance(spec, list) else spec)]), \
+         patch("streamlit.warning") as mock_warning:
+        render_ats_diagnostic_panel(diagnostic)
+        assert [c[0][0] for c in mock_warning.call_args_list] == diagnostic["run_warnings"]
+
 def test_diagnostic_panel_with_empty_data():
     with patch("streamlit.info") as mock_info:
         render_ats_diagnostic_panel({})
@@ -185,17 +194,13 @@ def test_navbar_authenticated_user_navigation():
 def test_auth_logout_redirects_to_landing():
     from src.ui.auth_views import render_logout_view
 
-    st.query_params.clear()
-    st.query_params["auth_token"] = "some-token"
-    with patch("src.ui.auth_views.auth_manager.sign_out") as mock_sign_out, \
-         patch("src.ui.auth_views.set_page") as mock_set_page, \
+    with patch("src.ui.auth_views.set_page") as mock_set_page, \
          patch("streamlit.toast"), \
          patch("streamlit.rerun"):
         render_logout_view()
-        assert mock_sign_out.called
         assert st.session_state.user_session["is_guest"] is True
-        assert st.query_params.get("action") == "logout"
-        assert "auth_token" not in st.query_params
+        # A flag só sai num novo login: impede que o cookie da requisição inicial restaure a sessão
+        assert st.session_state["logged_out"] is True
         mock_set_page.assert_called_with("landing")
 
 def test_render_storage_sync_authenticated():
@@ -203,19 +208,24 @@ def test_render_storage_sync_authenticated():
 
     with patch("streamlit.components.v1.html") as mock_html:
         render_storage_sync(token="valid.test.token", is_logout=False)
-        assert mock_html.called
         script_arg = mock_html.call_args[0][0]
-        assert "valid.test.token" in script_arg
-        assert "cv_nitro_auth_token" in script_arg
-        assert "isLogout = false" in script_arg
+        assert 'encodeURIComponent("valid.test.token")' in script_arg
+        assert "cv_nitro_auth_token=" in script_arg
+        assert "max-age=2592000" in script_arg
+        assert "SameSite=Strict" in script_arg
+        assert "localStorage" not in script_arg and "reload" not in script_arg
 
 def test_render_storage_sync_logout():
     from src.ui.components import render_storage_sync
 
     with patch("streamlit.components.v1.html") as mock_html:
         render_storage_sync(token=None, is_logout=True)
-        assert mock_html.called
         script_arg = mock_html.call_args[0][0]
-        assert "removeItem(storageKey)" in script_arg
-        assert "isLogout = true" in script_arg
+        assert "max-age=0" in script_arg
 
+def test_render_storage_sync_guest_noop():
+    from src.ui.components import render_storage_sync
+
+    with patch("streamlit.components.v1.html") as mock_html:
+        render_storage_sync(token=None, is_logout=False)
+        assert not mock_html.called

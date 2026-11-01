@@ -2,7 +2,7 @@ import pytest
 import streamlit as st
 from unittest.mock import patch, MagicMock
 import app
-from src.ui import dashboard_view, applications_view, wizard_view
+from src.ui import dashboard_view, applications_view, wizard_view, settings_view
 
 def mock_columns(spec, *args, **kwargs):
     count = spec if isinstance(spec, int) else len(spec)
@@ -26,13 +26,13 @@ def test_app_views_smoke():
         app.render_sidebar([])
 
         # Test empty dashboard
-        app.render_dashboard([])
+        dashboard_view.render_dashboard_view([])
 
         # Test settings
-        app.render_settings()
+        settings_view.render_settings_view(MagicMock())
 
         # Test empty applications list
-        app.render_applications_list([])
+        applications_view.render_applications_list([])
 
 def test_guest_restricted_views():
     # Usuário convidado (is_guest: True)
@@ -231,11 +231,13 @@ def test_wizard_view_streaming_success():
     mock_graph = MagicMock()
     # Emite eventos simulando streaming do grafo
     stream_events = [
-        {"job_analyzer": {"job_keywords": ["FastAPI"], "job_technologies": ["Python"], "job_language": "pt"}},
-        {"github_fetcher": {"raw_github_repos": [{"name": "fastapi-core"}]}},
-        {"relevance_ranker": {"github_repos": [{"name": "fastapi-core"}]}},
-        {"resume_generator": {"generated_resume_md": "# Currículo em Streaming"}},
-        {"quality_reviewer": {"reviewer_approved": True, "diagnostic": {"ats_score": 90}}}
+        ("updates", {"job_analyzer": {"job_keywords": ["FastAPI"], "job_technologies": ["Python"], "job_language": "pt"}}),
+        ("updates", {"github_fetcher": {"raw_github_repos": [{"name": "fastapi-core"}]}}),
+        ("updates", {"relevance_ranker": {"github_repos": [{"name": "fastapi-core"}]}}),
+        ("updates", {"resume_generator": {"generated_resume_md": "# Currículo em Streaming"}}),
+        ("updates", {"quality_reviewer": {"reviewer_approved": True, "diagnostic": {"ats_score": 90}}}),
+        ("values", {"generated_resume_md": "# Currículo em Streaming", "job_language": "pt",
+                    "diagnostic": {"ats_score": 90}, "errors": ["Usuário 'x' não foi encontrado no GitHub (HTTP 404)."]})
     ]
     mock_graph.stream.return_value = iter(stream_events)
 
@@ -267,10 +269,11 @@ def test_wizard_view_streaming_success():
         wizard_view.render_wizard_view(graph=mock_graph)
 
         assert mock_graph.stream.called
-        assert mock_graph.stream.call_args[1]["stream_mode"] == "updates"
+        assert mock_graph.stream.call_args[1]["stream_mode"] == ["updates", "values"]
         assert mock_save.called
         save_kwargs = mock_save.call_args[1]
         assert save_kwargs["content"] == "# Currículo em Streaming"
+        assert save_kwargs["diagnostic"]["run_warnings"] == ["Usuário 'x' não foi encontrado no GitHub (HTTP 404)."]
         assert save_kwargs["job_title"] == "Desenvolvedor Backend Python"
         assert st.session_state.current_page == "applications"
         assert mock_rerun.called
@@ -311,3 +314,42 @@ def test_wizard_view_streaming_exception_handling():
         assert mock_rerun.called
 
 
+
+def test_run_pipeline_keeps_errors_from_every_node():
+    import operator
+    from typing import Annotated, TypedDict
+    from langgraph.graph import StateGraph, START, END
+
+    class State(TypedDict):
+        x: int
+        errors: Annotated[list, operator.add]
+
+    g = StateGraph(State)
+    g.add_node("a", lambda s: {"errors": ["a falhou"]})
+    g.add_node("b", lambda s: {"errors": ["b falhou"]})
+    g.add_edge(START, "a")
+    g.add_edge("a", "b")
+    g.add_edge("b", END)
+
+    seen = []
+    final = wizard_view.run_pipeline(g.compile(), {"x": 1, "errors": []}, lambda node, update: seen.append(node))
+    assert final["errors"] == ["a falhou", "b falhou"]
+    assert seen == ["a", "b"]
+
+def test_build_initial_state_reuses_profile_repo_cache():
+    cached = [{"name": "repo", "html_url": "https://github.com/octo/repo"}]
+    profile = {"github_username": "Octo", "cached_repos": cached + [{"name": "formato-antigo", "url": "x"}]}
+    state = wizard_view.build_initial_state("vaga", "cv", "octo", "", True, False, profile)
+    assert state["raw_github_repos"] == cached
+    assert "raw_github_repos" not in wizard_view.build_initial_state("vaga", "cv", "outro", "", True, False, profile)
+    old_only = {"github_username": "octo", "cached_repos": [{"name": "formato-antigo", "url": "x"}]}
+    assert "raw_github_repos" not in wizard_view.build_initial_state("vaga", "cv", "octo", "", True, False, old_only)
+
+def test_notify_saved_warns_when_cloud_sync_failed(monkeypatch):
+    from src.ui.components import notify_saved
+    monkeypatch.setattr("src.core.history_manager.is_supabase_configured", lambda: True)
+    with patch("streamlit.toast") as mock_toast:
+        notify_saved("history/arquivo_local.md", "ok")
+        assert "não foi possível sincronizar" in mock_toast.call_args[0][0]
+        notify_saved("supabase:abc", "Salvo!")
+        assert mock_toast.call_args[0][0] == "Salvo!"

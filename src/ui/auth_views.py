@@ -1,12 +1,16 @@
 import streamlit as st
 from typing import Callable, Optional
-from src.core import auth_manager
+from src.core import auth_manager, history_manager
 from src.ui.navbar import set_page, clear_transient_state
 
 def _auth_header(title: str, subtitle: str):
     """Título centralizado dos cartões de autenticação."""
     st.markdown(f"### {title}", text_alignment="center", anchors=False)
     st.caption(subtitle, text_alignment="center")
+
+def _local_mode_warning():
+    if not history_manager.is_supabase_configured():
+        st.warning("**Modo local de desenvolvimento:** sem Supabase configurado, a senha não é verificada e os dados ficam só nesta máquina.", icon=":material/developer_mode:")
 
 def _back_to_landing(key: str):
     if st.button("Voltar ao Início", type="tertiary", icon=":material/arrow_back:", key=key):
@@ -23,6 +27,7 @@ def render_login_view(on_success_callback: Optional[Callable] = None):
         st.space("medium")
         with st.container(border=True):
             _auth_header("Entrar no GitMatch", "Acesse suas candidaturas, seu perfil salvo e o cache de projetos.")
+            _local_mode_warning()
 
             if st.session_state.get("auth_error"):
                 st.error(st.session_state.auth_error, icon=":material/error:")
@@ -42,7 +47,6 @@ def render_login_view(on_success_callback: Optional[Callable] = None):
                     if res["success"]:
                         st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
-                        st.query_params.pop("auth_token", None)
                         if on_success_callback:
                             on_success_callback()
                         st.toast(f"Bem-vindo(a) de volta, {res['user']['display_name']}!")
@@ -68,6 +72,7 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
         st.space("medium")
         with st.container(border=True):
             _auth_header("Criar conta no GitMatch", "Sincronize currículos e reaproveite seu perfil em qualquer otimização.")
+            _local_mode_warning()
 
             if st.session_state.get("auth_error"):
                 st.error(st.session_state.auth_error, icon=":material/error:")
@@ -98,7 +103,6 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
                     if res["success"]:
                         st.session_state.pop("logged_out", None)
                         st.session_state.user_session = res["user"]
-                        st.query_params.pop("auth_token", None)
                         if on_success_callback:
                             on_success_callback()
                         st.toast(res.get("message", "Conta criada com sucesso!"))
@@ -115,12 +119,9 @@ def render_signup_view(on_success_callback: Optional[Callable] = None):
                 _back_to_landing(key="btn_back_from_signup")
 
 def render_logout_view(on_success_callback: Optional[Callable] = None):
-    """Página 'Sair' do menu de conta: encerra a sessão e volta para a landing page."""
-    auth_manager.sign_out()
+    """Página 'Sair' do menu de conta: encerra a sessão (até um novo login) e volta para a landing page."""
     st.session_state.user_session = auth_manager.create_guest_session()
     st.session_state["logged_out"] = True
-    st.query_params.clear()
-    st.query_params["action"] = "logout"
     clear_transient_state()
     if on_success_callback:
         on_success_callback()

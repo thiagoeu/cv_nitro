@@ -1,11 +1,11 @@
 import streamlit as st
 from typing import Callable
-from src.core import history_manager
+from src.core import history_manager, profile_manager
 from src.core.resume_formatter import format_resume_to_html, parse_resume_markdown, serialize_resume_markdown
-from src.agents.state import GraphState
 from src.ui.diagnostic_view import render_ats_diagnostic_panel
 from src.ui.navbar import clear_transient_state, set_page
-from src.ui.components import page_header, login_gate, application_card
+from src.ui.components import page_header, login_gate, application_card, notify_saved
+from src.ui.wizard_view import build_initial_state, run_pipeline_with_status, save_pipeline_result
 
 def render_application_view(
     filepath: str,
@@ -16,14 +16,14 @@ def render_application_view(
     """
     Renderiza o visualizador detalhado de uma candidatura selecionada.
     """
-    app_data = get_cached_application_fn(filepath)
+    current_uid = st.session_state.user_session.get("user_id", "guest_local")
+    app_data = get_cached_application_fn(filepath, current_uid)
     metadata = app_data.get("metadata", {})
     job_title = (metadata.get("job_title") or "Vaga").strip()
     job_url = metadata.get("job_url", "")
     lang = (metadata.get("language") or "pt").upper()
     date_str = history_manager.format_display_date(metadata.get("date", ""))
     diagnostic = metadata.get("diagnostic", {})
-    current_uid = st.session_state.user_session.get("user_id", "guest_local")
     is_rerun_open = st.session_state.get(f"show_rerun_{filepath}", False)
 
     # Barra de ações: voltar à esquerda, ações da candidatura à direita
@@ -45,7 +45,7 @@ def render_application_view(
             st.markdown("**Excluir esta candidatura?**")
             st.caption("Esta ação remove o currículo e diagnóstico permanentemente.")
             if st.button("Sim, excluir definitivamente", type="primary", icon=":material/delete_forever:", key=f"btn_confirm_del_{filepath}", width="stretch"):
-                history_manager.delete_application(filepath)
+                history_manager.delete_application(filepath, current_uid)
                 clear_history_cache_cb()
                 if "viewing_history" in st.session_state:
                     del st.session_state.viewing_history
@@ -84,51 +84,22 @@ def render_application_view(
                 if not r_title or not r_desc or not r_base:
                     st.error("Preencha título, descrição e currículo base.", icon=":material/error:")
                 else:
-                    initial_state = GraphState(
-                        job_description=r_desc,
-                        base_resume_md=r_base,
-                        github_username=r_github,
-                        job_url=r_url,
-                        job_keywords=[],
-                        job_technologies=[],
-                        job_language="pt",
-                        github_repos=[],
-                        github_readmes={},
-                        generated_resume_md=None,
-                        generated_cover_letter_md=None,
-                        reviewer_feedback=None,
-                        reviewer_approved=False,
-                        review_attempts=0,
-                        generate_cover_letter=r_cover,
-                        strict_review=r_strict
+                    current_email = st.session_state.user_session.get("email", "")
+                    initial_state = build_initial_state(
+                        r_desc, r_base, r_github, r_url, r_cover, r_strict,
+                        profile_manager.get_user_profile(current_uid, current_email)
                     )
-                    with st.status("Re-otimizando currículo...", expanded=True) as status:
-                        st.write("Reprocessando alinhamento com a vaga...")
-                        try:
-                            final_state = graph.invoke(initial_state)
-                        except Exception as e:
-                            status.update(label="Falha na re-otimização", state="error")
-                            st.error(f"Erro: {e}")
-                            return
-                        status.update(label="Re-otimização concluída!", state="complete", expanded=False)
+                    try:
+                        final_state = run_pipeline_with_status(graph, initial_state, "Re-otimizando currículo...")
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
+                        return
 
-                    new_path = history_manager.save_resume(
-                        job_title=r_title,
-                        content=final_state.get("generated_resume_md", ""),
-                        job_url=r_url,
-                        cover_letter=final_state.get("generated_cover_letter_md", ""),
-                        language=final_state.get("job_language", "pt"),
-                        technologies=final_state.get("job_technologies", []),
-                        job_description=r_desc,
-                        base_resume=r_base,
-                        github_username=r_github,
-                        diagnostic=final_state.get("diagnostic", {}),
-                        user_id=current_uid
-                    )
+                    new_path = save_pipeline_result(final_state, r_title, r_url, r_desc, r_base, r_github, current_uid)
                     clear_history_cache_cb()
                     st.session_state.viewing_history = new_path
                     st.session_state[f"show_rerun_{filepath}"] = False
-                    st.toast("Currículo re-otimizado com sucesso!")
+                    notify_saved(new_path, "Currículo re-otimizado com sucesso!")
                     st.rerun()
 
     # Cabeçalho da vaga
@@ -152,6 +123,26 @@ def render_application_view(
 
     resume_md = app_data.get("resume_md", "")
     cover_letter_md = app_data.get("cover_letter_md", "")
+
+    def save_edit(content: str, cover_letter: str, message: str):
+        saved_path = history_manager.save_resume(
+            job_title=job_title,
+            content=content,
+            job_url=job_url,
+            cover_letter=cover_letter,
+            language=metadata.get("language", "pt"),
+            technologies=metadata.get("technologies", []),
+            job_description=metadata.get("job_description", ""),
+            base_resume=metadata.get("base_resume", ""),
+            github_username=metadata.get("github_username", ""),
+            filepath=filepath,
+            diagnostic=diagnostic,
+            user_id=current_uid
+        )
+        clear_history_cache_cb()
+        st.session_state.viewing_history = saved_path
+        notify_saved(saved_path, message)
+        st.rerun()
     formatted_html = format_resume_to_html(resume_md, title=f"Currículo - {job_title}")
     file_stub = job_title.replace(" ", "_")
 
@@ -247,25 +238,7 @@ def render_application_view(
                 if not final_compiled_md.strip():
                     st.error("O currículo não pode ficar vazio.", icon=":material/error:")
                 else:
-                    saved_path = history_manager.save_resume(
-                        job_title=job_title,
-                        content=final_compiled_md,
-                        job_url=job_url,
-                        cover_letter=cover_letter_md,
-                        language=metadata.get("language", "pt"),
-                        technologies=metadata.get("technologies", []),
-                        job_description=metadata.get("job_description", ""),
-                        base_resume=metadata.get("base_resume", ""),
-                        github_username=metadata.get("github_username", ""),
-                        filepath=filepath,
-                        diagnostic=diagnostic,
-                        user_id=current_uid
-                    )
-                    clear_history_cache_cb()
-                    if saved_path:
-                        st.session_state.viewing_history = saved_path
-                    st.toast("Currículo atualizado com layout travado! A folha A4 foi recompilada.", icon=":material/check_circle:")
-                    st.rerun()
+                    save_edit(final_compiled_md, cover_letter_md, "Currículo atualizado com layout travado! A folha A4 foi recompilada.")
 
         else:
             new_resume_md = st.text_area(
@@ -296,25 +269,7 @@ def render_application_view(
                 if not new_resume_md.strip():
                     st.error("O currículo não pode ficar vazio.", icon=":material/error:")
                 else:
-                    saved_path = history_manager.save_resume(
-                        job_title=job_title,
-                        content=new_resume_md.strip(),
-                        job_url=job_url,
-                        cover_letter=cover_letter_md,
-                        language=metadata.get("language", "pt"),
-                        technologies=metadata.get("technologies", []),
-                        job_description=metadata.get("job_description", ""),
-                        base_resume=metadata.get("base_resume", ""),
-                        github_username=metadata.get("github_username", ""),
-                        filepath=filepath,
-                        diagnostic=diagnostic,
-                        user_id=current_uid
-                    )
-                    clear_history_cache_cb()
-                    if saved_path:
-                        st.session_state.viewing_history = saved_path
-                    st.toast("Currículo atualizado! A folha A4 foi recompilada com sucesso.", icon=":material/check_circle:")
-                    st.rerun()
+                    save_edit(new_resume_md.strip(), cover_letter_md, "Currículo atualizado! A folha A4 foi recompilada com sucesso.")
 
             with st.expander(":material/visibility: Pré-visualizar Markdown renderizado na tela", expanded=False):
                 st.markdown(new_resume_md if new_resume_md else "_Nenhum conteúdo de currículo encontrado._")
@@ -348,25 +303,7 @@ def render_application_view(
                 )
 
             if btn_save_letter:
-                saved_path = history_manager.save_resume(
-                    job_title=job_title,
-                    content=resume_md,
-                    job_url=job_url,
-                    cover_letter=new_cover_md.strip(),
-                    language=metadata.get("language", "pt"),
-                    technologies=metadata.get("technologies", []),
-                    job_description=metadata.get("job_description", ""),
-                    base_resume=metadata.get("base_resume", ""),
-                    github_username=metadata.get("github_username", ""),
-                    filepath=filepath,
-                    diagnostic=diagnostic,
-                    user_id=current_uid
-                )
-                clear_history_cache_cb()
-                if saved_path:
-                    st.session_state.viewing_history = saved_path
-                st.toast("Carta de apresentação atualizada com sucesso!", icon=":material/check_circle:")
-                st.rerun()
+                save_edit(resume_md, new_cover_md.strip(), "Carta de apresentação atualizada com sucesso!")
 
             with st.expander(":material/visibility: Pré-visualizar carta renderizada", expanded=False):
                 st.markdown(new_cover_md if new_cover_md else "_Nenhum conteúdo._")

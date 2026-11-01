@@ -27,25 +27,25 @@ ALTER TABLE public.applications ADD COLUMN IF NOT EXISTS user_id UUID;
 CREATE INDEX IF NOT EXISTS idx_applications_created_at ON public.applications (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_applications_user_id ON public.applications (user_id);
 
--- Habilitar RLS em applications
+-- Toda gravação nova exige dono (NOT VALID: não falha por linhas antigas com user_id nulo)
+ALTER TABLE public.applications DROP CONSTRAINT IF EXISTS applications_user_id_required;
+ALTER TABLE public.applications ADD CONSTRAINT applications_user_id_required CHECK (user_id IS NOT NULL) NOT VALID;
+
+-- RLS: nenhuma política para anon (chave pública não lê nem grava nada).
+-- O app acessa os dados com a service role (que ignora RLS) e filtra por user_id no servidor.
 ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Acesso público anônimo total para aplicações" ON public.applications;
 DROP POLICY IF EXISTS "Acesso público anônimo e autenticado para aplicações" ON public.applications;
 DROP POLICY IF EXISTS "Usuários gerenciam suas próprias aplicações ou anônimas" ON public.applications;
+DROP POLICY IF EXISTS "Usuários gerenciam suas próprias aplicações" ON public.applications;
 
-CREATE POLICY "Usuários gerenciam suas próprias aplicações ou anônimas"
+CREATE POLICY "Usuários gerenciam suas próprias aplicações"
 ON public.applications
 FOR ALL
-TO anon, authenticated
-USING (
-    (auth.uid() IS NOT NULL AND auth.uid() = user_id)
-    OR (user_id IS NULL)
-)
-WITH CHECK (
-    (auth.uid() IS NOT NULL AND auth.uid() = user_id)
-    OR (user_id IS NULL)
-);
+TO authenticated
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
 
 -- 2. Tabela de Perfil do Candidato (Reaproveitamento de Dados e Cache)
 CREATE TABLE IF NOT EXISTS public.user_profiles (
@@ -71,7 +71,7 @@ ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 
--- Habilitar RLS em user_profiles
+-- RLS em user_profiles: mesma regra (sem acesso anon; authenticated só ao próprio perfil)
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Acesso a perfis de usuário" ON public.user_profiles;
@@ -80,15 +80,9 @@ DROP POLICY IF EXISTS "Usuários gerenciam seu próprio perfil" ON public.user_p
 CREATE POLICY "Usuários gerenciam seu próprio perfil"
 ON public.user_profiles
 FOR ALL
-TO anon, authenticated
-USING (
-    (auth.uid() IS NOT NULL AND auth.uid() = user_id)
-    OR (auth.uid() IS NULL)
-)
-WITH CHECK (
-    (auth.uid() IS NOT NULL AND auth.uid() = user_id)
-    OR (auth.uid() IS NULL)
-);
+TO authenticated
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
 
 -- 3. Trigger Automático para Criar Perfil quando Novo Usuário se Cadastra no Supabase Auth
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -108,7 +102,7 @@ BEGIN
         updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Recriar trigger de forma segura e idempotente
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;

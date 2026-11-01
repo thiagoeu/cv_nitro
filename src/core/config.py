@@ -14,7 +14,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Chave anon: usada só para login/cadastro
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Chave service role: acesso a dados apenas no servidor (ignora RLS; o app filtra por user_id)
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+# Assina o cookie de sessão; obrigatória (o app não inicia sem ela)
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
 
 if not GEMINI_API_KEY:
     print("WARNING: GEMINI_API_KEY não encontrada nas variáveis de ambiente.")

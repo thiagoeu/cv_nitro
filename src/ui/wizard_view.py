@@ -3,7 +3,107 @@ from typing import Callable, Optional
 from src.core import history_manager, profile_manager
 from src.agents.state import GraphState
 from src.ui.navbar import clear_transient_state, set_page
-from src.ui.components import page_header, resume_input
+from src.ui.components import page_header, resume_input, notify_saved
+
+NODE_STATUS_LABELS = {
+    "job_analyzer": "🎯 Análise da vaga e extração de requisitos concluída",
+    "github_fetcher": "🐙 Repositórios públicos consultados no GitHub",
+    "relevance_ranker": "⚡ Ranqueamento determinístico de relevância do portfólio",
+    "resume_generator": "✍️ Redação executiva do currículo de alta fidelidade",
+    "section_patcher": "🩹 Refinamento cirúrgico de seção concluído",
+    "quality_reviewer": "🔍 Auditoria de qualidade e conformidade ATS",
+    "cover_letter_generator": "✉️ Redação personalizada da Carta de Apresentação"
+}
+
+def build_initial_state(
+    job_description: str,
+    base_resume: str,
+    github_username: str,
+    job_url: str,
+    generate_cover_letter: bool,
+    strict_review: bool,
+    profile: Optional[dict] = None
+) -> dict:
+    """Estado inicial do grafo; reaproveita os repositórios em cache do perfil quando o usuário do GitHub é o mesmo."""
+    state = GraphState(
+        job_description=job_description,
+        base_resume_md=base_resume,
+        github_username=github_username,
+        job_url=job_url,
+        job_keywords=[],
+        job_technologies=[],
+        job_language="pt",
+        github_repos=[],
+        github_readmes={},
+        generated_resume_md=None,
+        generated_cover_letter_md=None,
+        reviewer_feedback=None,
+        reviewer_approved=False,
+        review_attempts=0,
+        generate_cover_letter=generate_cover_letter,
+        strict_review=strict_review
+    )
+    profile = profile or {}
+    same_user = (github_username or "").strip().lower() == (profile.get("github_username") or "").strip().lower()
+    # Entradas sem html_url são do formato antigo do cache (já ranqueado): ignoradas, força busca normal
+    cached = [r for r in profile.get("cached_repos") or [] if r.get("html_url")]
+    if same_user and cached and github_username.strip():
+        state["raw_github_repos"] = cached
+    return state
+
+def run_pipeline(graph, inputs: dict, on_node: Optional[Callable[[str, dict], None]] = None) -> dict:
+    """
+    Executa o grafo com streaming: 'updates' alimenta o progresso (on_node) e o último 'values'
+    é o estado final, com os reducers aplicados (ex.: 'errors' acumulado de todos os nós).
+    """
+    final_state = dict(inputs)
+    for mode, chunk in graph.stream(inputs, stream_mode=["updates", "values"]):
+        if mode == "values":
+            final_state = chunk
+        elif on_node:
+            for node_name, update in chunk.items():
+                on_node(node_name, update if isinstance(update, dict) else {})
+    return final_state
+
+def run_pipeline_with_status(graph, inputs: dict, label: str) -> dict:
+    """Checklist dos agentes e prévia do currículo enquanto o grafo roda; exceções são propagadas."""
+    with st.status(label, expanded=True) as status:
+        preview_placeholder = st.empty()
+
+        def on_node(node_name: str, update: dict):
+            st.write(NODE_STATUS_LABELS.get(node_name, f"Etapa {node_name} concluída."))
+            if update.get("generated_resume_md"):
+                with preview_placeholder.container():
+                    st.caption("📄 *Prévia em tempo real do currículo gerado:*")
+                    st.markdown(update["generated_resume_md"])
+
+        try:
+            final_state = run_pipeline(graph, inputs, on_node)
+        except Exception:
+            status.update(label="Falha na execução do pipeline", state="error", expanded=True)
+            raise
+        status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
+    return final_state
+
+def save_pipeline_result(final_state: dict, job_title: str, job_url: str, job_description: str,
+                         base_resume: str, github_username: str, user_id: str) -> str:
+    """Salva a candidatura gerada; avisos não fatais da execução ficam no diagnóstico (visíveis ao reabrir)."""
+    diagnostic = dict(final_state.get("diagnostic") or {})
+    if final_state.get("errors"):
+        diagnostic["run_warnings"] = list(final_state["errors"])
+    return history_manager.save_resume(
+        job_title=job_title,
+        content=final_state.get("generated_resume_md") or "",
+        job_url=job_url,
+        cover_letter=final_state.get("generated_cover_letter_md") or "",
+        language=final_state.get("job_language") or "pt",
+        technologies=final_state.get("job_technologies") or [],
+        job_description=job_description,
+        base_resume=base_resume,
+        github_username=github_username,
+        diagnostic=diagnostic,
+        user_id=user_id
+    )
 
 def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None):
     """
@@ -84,81 +184,19 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
             st.rerun()
             return
 
-        initial_state = GraphState(
-            job_description=job_desc,
-            base_resume_md=base_resume,
-            github_username=github_user,
-            job_url=job_url,
-            job_keywords=[],
-            job_technologies=[],
-            job_language="pt",
-            github_repos=[],
-            github_readmes={},
-            generated_resume_md=None,
-            generated_cover_letter_md=None,
-            reviewer_feedback=None,
-            reviewer_approved=False,
-            review_attempts=0,
-            generate_cover_letter=gen_cover,
-            strict_review=strict_rev
-        )
+        initial_state = build_initial_state(job_desc, base_resume, github_user, job_url, gen_cover, strict_rev, user_prof)
 
-        NODE_STATUS_LABELS = {
-            "job_analyzer": "🎯 Análise da vaga e extração de requisitos concluída",
-            "github_fetcher": "🐙 Repositórios públicos consultados no GitHub",
-            "relevance_ranker": "⚡ Ranqueamento determinístico de relevância do portfólio",
-            "resume_generator": "✍️ Redação executiva do currículo de alta fidelidade",
-            "section_patcher": "🩹 Refinamento cirúrgico de seção concluído",
-            "quality_reviewer": "🔍 Auditoria de qualidade e conformidade ATS",
-            "cover_letter_generator": "✉️ Redação personalizada da Carta de Apresentação"
-        }
+        try:
+            final_state = run_pipeline_with_status(graph, initial_state, "Executando pipeline multi-agente em tempo real...")
+        except Exception as e:
+            st.session_state.wizard_errors = [f"Erro durante a execução do grafo: {e}"]
+            st.rerun()
+            return
 
-        final_state = dict(initial_state)
-
-        with st.status("Executando pipeline multi-agente em tempo real...", expanded=True) as status:
-            st.write("🚀 Iniciando grafo multi-agente...")
-            preview_placeholder = st.empty()
-            try:
-                if hasattr(graph, "stream"):
-                    for event in graph.stream(initial_state, stream_mode="updates"):
-                        for node_name, node_update in event.items():
-                            if isinstance(node_update, dict):
-                                final_state.update(node_update)
-                            
-                            label = NODE_STATUS_LABELS.get(node_name, f"Etapa {node_name} concluída.")
-                            st.write(label)
-
-                            current_md = final_state.get("generated_resume_md")
-                            if node_name in ["resume_generator", "section_patcher"] and current_md:
-                                with preview_placeholder.container():
-                                    st.caption("📄 *Prévia em tempo real do currículo gerado:*")
-                                    st.markdown(current_md)
-                else:
-                    final_state = graph.invoke(initial_state)
-
-                status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
-            except Exception as e:
-                status.update(label="Falha na execução do pipeline", state="error", expanded=True)
-                st.session_state.wizard_errors = [f"Erro durante a execução do grafo: {e}"]
-                st.rerun()
-                return
-
-        saved_path = history_manager.save_resume(
-            job_title=job_title.strip(),
-            content=final_state.get("generated_resume_md", ""),
-            job_url=job_url,
-            cover_letter=final_state.get("generated_cover_letter_md", ""),
-            language=final_state.get("job_language", "pt"),
-            technologies=final_state.get("job_technologies", []),
-            job_description=job_desc,
-            base_resume=base_resume,
-            github_username=github_user,
-            diagnostic=final_state.get("diagnostic", {}),
-            user_id=current_uid
-        )
+        saved_path = save_pipeline_result(final_state, job_title.strip(), job_url, job_desc, base_resume, github_user, current_uid)
         if clear_history_cache_cb:
             clear_history_cache_cb()
-        st.session_state[f"run_errors_{saved_path}"] = final_state.get("errors", [])
+        notify_saved(saved_path, "Currículo otimizado salvo!")
         st.session_state.viewing_history = saved_path
         set_page("applications", clear_transient=False)
         st.rerun()

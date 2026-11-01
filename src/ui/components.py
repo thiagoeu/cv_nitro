@@ -1,8 +1,10 @@
 import streamlit as st
 from typing import Optional
-from src.core import history_manager
+from src.core import history_manager, auth_manager
 from src.core.document_parser import extract_text_from_file
 from src.ui.navbar import set_page
+
+SESSION_COOKIE = "cv_nitro_auth_token"
 
 # Dicionário de Tokens da Paleta Clássico Tech Confiável (Regra 60-30-10)
 THEME_TOKENS = {
@@ -429,93 +431,20 @@ def render_footer():
 
 def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
     """
-    Sincroniza a credencial de sessão com o localStorage e cookie do navegador via iframe,
-    garantindo que o token NÃO fique visível na URL para o usuário e sobreviva ao F5.
-    - Se autenticado: grava o token assinado no localStorage e no cookie.
-    - Se logout: remove o token do localStorage e expira o cookie.
-    - Se visitante em recarregamento: detecta o token salvo e sincroniza com o backend.
+    Grava o cookie de sessão no login e o expira no logout, via iframe com acesso ao documento pai.
+    No F5 o navegador envia o cookie na requisição inicial, lida em st.context.cookies.
     """
+    if not token and not is_logout:
+        return
     import streamlit.components.v1 as components
-    clean_token = token or ""
-    logout_flag = "true" if is_logout else "false"
-
+    max_age = 0 if is_logout else auth_manager.SESSION_TTL_SECONDS
     script = f"""
     <script>
     (function() {{
-        try {{
-            var storageKey = "cv_nitro_auth_token";
-            var win = window.parent || window;
-            var activeToken = "{clean_token}";
-            var isLogout = {logout_flag};
-
-            // 1. Limpeza estética e de privacidade: limpa resquícios de auth_token da barra de endereço
-            try {{
-                if (win.location.search && win.location.search.indexOf("auth_token=") !== -1) {{
-                    var cleanSearch = win.location.search
-                        .replace(/[?&]auth_token=[^&]+/, '')
-                        .replace(/^&/, '?');
-                    if (cleanSearch === '?') cleanSearch = '';
-                    var cleanUrl = win.location.pathname + cleanSearch + win.location.hash;
-                    win.history.replaceState(null, '', cleanUrl);
-                }}
-            }} catch(e) {{}}
-
-            if (isLogout) {{
-                try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
-                try {{ window.localStorage.removeItem(storageKey); }} catch(e) {{}}
-                try {{ win.sessionStorage.removeItem("auth_restore_attempted"); }} catch(e) {{}}
-                try {{ win.document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
-                try {{ document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
-            }} else if (activeToken && activeToken.length > 10) {{
-                try {{ win.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
-                try {{ window.localStorage.setItem(storageKey, activeToken); }} catch(e) {{}}
-                try {{ win.sessionStorage.removeItem("auth_restore_attempted"); }} catch(e) {{}}
-                try {{ win.document.cookie = storageKey + "=" + encodeURIComponent(activeToken) + "; path=/; max-age=2592000; SameSite=Lax"; }} catch(e) {{}}
-                try {{ document.cookie = storageKey + "=" + encodeURIComponent(activeToken) + "; path=/; max-age=2592000; SameSite=Lax"; }} catch(e) {{}}
-            }} else {{
-                var savedToken = null;
-                try {{ savedToken = win.localStorage.getItem(storageKey); }} catch(e) {{}}
-                if (!savedToken) {{
-                    try {{ savedToken = window.localStorage.getItem(storageKey); }} catch(e) {{}}
-                }}
-                if (!savedToken) {{
-                    try {{
-                        var match = (win.document.cookie || document.cookie).match(new RegExp('(^| )' + storageKey + '=([^;]+)'));
-                        if (match) savedToken = decodeURIComponent(match[2]);
-                    }} catch(e) {{}}
-                }}
-
-                if (savedToken && savedToken.length > 10) {{
-                    // Garante que o cookie esteja definido para as próximas requisições HTTP (F5)
-                    try {{
-                        win.document.cookie = storageKey + "=" + encodeURIComponent(savedToken) + "; path=/; max-age=2592000; SameSite=Lax";
-                    }} catch(e) {{}}
-
-                    var attemptKey = "auth_restore_attempted";
-                    var lastAttempt = null;
-                    try {{ lastAttempt = win.sessionStorage.getItem(attemptKey); }} catch(e) {{}}
-
-                    if (lastAttempt !== savedToken) {{
-                        try {{ win.sessionStorage.setItem(attemptKey, savedToken); }} catch(e) {{}}
-                        // Injeta script no documento pai para reload seguro sem violar sandboxing do iframe
-                        try {{
-                            var s = win.document.createElement("script");
-                            s.textContent = "window.location.reload();";
-                            win.document.head.appendChild(s);
-                            s.remove();
-                        }} catch(e) {{
-                            try {{ win.location.reload(); }} catch(err) {{}}
-                        }}
-                    }} else {{
-                        // Se já tentou e continuou deslogado no servidor, o token está expirado/inválido: limpa para evitar loops
-                        try {{ win.localStorage.removeItem(storageKey); }} catch(e) {{}}
-                        try {{ win.document.cookie = storageKey + "=; path=/; max-age=0; SameSite=Lax"; }} catch(e) {{}}
-                    }}
-                }}
-            }}
-        }} catch(e) {{
-            // Silencioso em caso de restrições de sandbox
-        }}
+        var win = window.parent || window;
+        var secure = win.location.protocol === "https:" ? "; Secure" : "";
+        win.document.cookie = "{SESSION_COOKIE}=" + encodeURIComponent("{token or ''}") +
+            "; path=/; max-age={max_age}; SameSite=Strict" + secure;
     }})();
     </script>
     """
@@ -524,3 +453,9 @@ def render_storage_sync(token: Optional[str] = None, is_logout: bool = False):
     except Exception:
         pass
 
+def notify_saved(saved_path: str, message: str):
+    """Confirma o salvamento; com Supabase ativo, caminho local significa que a sincronização com a nuvem falhou."""
+    if history_manager.is_supabase_configured() and not saved_path.startswith("supabase:"):
+        st.toast("Salvo apenas localmente: não foi possível sincronizar com a nuvem. Tente salvar novamente mais tarde.", icon=":material/cloud_off:")
+    else:
+        st.toast(message, icon=":material/check_circle:")

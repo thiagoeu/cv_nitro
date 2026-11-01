@@ -1,12 +1,13 @@
 import os
+import urllib.parse
 import streamlit as st
-from src.core import history_manager, auth_manager
+from src.core import history_manager, auth_manager, config
 from src.agents.graph import build_graph
 from src.ui.navbar import render_navbar, set_page
-from src.ui.components import apply_theme, render_footer, render_storage_sync
+from src.ui.components import apply_theme, render_footer, render_storage_sync, SESSION_COOKIE
 from src.ui.dashboard_view import render_dashboard_view
 from src.ui.wizard_view import render_wizard_view
-from src.ui.applications_view import render_applications_view, render_applications_list as ui_render_apps_list
+from src.ui.applications_view import render_applications_view
 from src.ui.profile_view import render_profile_view
 from src.ui.settings_view import render_settings_view
 from src.ui.auth_views import render_login_view, render_signup_view, render_logout_view
@@ -22,52 +23,45 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# 2. Compilação do Grafo Multi-Agente
-graph = build_graph()
+if not config.AUTH_SECRET_KEY:
+    st.error(
+        "**AUTH_SECRET_KEY não configurada.** Gere uma chave com "
+        "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`, "
+        "defina `AUTH_SECRET_KEY` no `.env` e reinicie o app.",
+        icon=":material/key_off:"
+    )
+    st.stop()
 
-# 3. Inicialização e Restauração de Sessão Persistente (F5 / LocalStorage)
-action = st.query_params.get("action")
-auth_token = st.query_params.get("auth_token")
-is_logout_event = (action == "logout") or st.session_state.get("logged_out", False)
+# 2. Grafo Multi-Agente compilado uma vez por processo
+@st.cache_resource(show_spinner=False)
+def get_graph():
+    return build_graph()
 
-if is_logout_event:
-    # Ação explícita de encerramento de sessão
-    st.session_state.user_session = auth_manager.create_guest_session()
-    st.session_state.current_page = "landing"
-    st.query_params.pop("action", None)
-    st.query_params.pop("auth_token", None)
-else:
-    # Se a sessão estiver vazia (ex: F5) ou como convidado, tenta restaurar token do cookie ou da URL
-    if "user_session" not in st.session_state or st.session_state.user_session.get("is_guest", True):
-        # 1. Recupera primeiro dos cookies HTTP nativos (enviados no header pelo navegador no F5)
-        raw_cookie_token = None
-        if hasattr(st, "context") and hasattr(st.context, "cookies"):
-            try:
-                raw_cookie_token = st.context.cookies.get("cv_nitro_auth_token")
-            except Exception:
-                raw_cookie_token = None
+graph = get_graph()
 
-        token_to_restore = auth_token or raw_cookie_token
-        if token_to_restore:
-            import urllib.parse
-            clean_token = urllib.parse.unquote(str(token_to_restore).strip('"'))
-            restored_user = auth_manager.restore_session_from_token(clean_token)
-            if restored_user:
-                st.session_state.user_session = restored_user
-            else:
-                st.session_state.user_session = auth_manager.create_guest_session()
-            # Remove o token da URL imediatamente para nunca ficar exposto ao usuário
-            st.query_params.pop("auth_token", None)
-        else:
-            st.session_state.user_session = auth_manager.create_guest_session()
+# 3. Restauração de sessão pelo cookie assinado (F5); token na URL nunca é considerado
+def restore_session():
+    if st.session_state.get("logged_out"):
+        # st.context.cookies é o retrato da requisição inicial: o cookie expirado no logout
+        # continua aparecendo até a página ser recarregada, então só um novo login limpa a flag.
+        st.session_state.user_session = auth_manager.create_guest_session()
+    elif "user_session" not in st.session_state or st.session_state.user_session.get("is_guest", True):
+        try:
+            raw_cookie_token = st.context.cookies.get(SESSION_COOKIE)
+        except Exception:
+            raw_cookie_token = None
+        restored_user = None
+        if raw_cookie_token:
+            restored_user = auth_manager.restore_session_from_token(urllib.parse.unquote(str(raw_cookie_token).strip('"')))
+        st.session_state.user_session = restored_user or auth_manager.create_guest_session()
+
+restore_session()
 
 session = st.session_state.get("user_session", {})
 is_guest = session.get("is_guest", True)
 
-# Token assinado obtido da sessão para manter o localStorage sincronizado sem expor na URL
-active_token = None
-if not is_guest and session.get("is_authenticated", False):
-    active_token = auth_manager.create_session_token(session)
+# Token renovado a cada execução (expiração deslizante de 30 dias)
+active_token = None if is_guest else auth_manager.create_session_token(session)
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "landing" if is_guest else "dashboard"
@@ -79,9 +73,9 @@ def get_cached_resumes(user_id: str = "guest_local"):
     return history_manager.list_resumes(user_id=user_id)
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_cached_application(filepath: str):
+def get_cached_application(filepath: str, user_id: str):
     """Carrega dados da aplicação com cache em memória para visualização sem latência."""
-    return history_manager.load_application(filepath)
+    return history_manager.load_application(filepath, user_id)
 
 def clear_history_cache():
     """Invalida o cache após salvar, atualizar ou excluir candidaturas."""
@@ -111,29 +105,12 @@ def render_sidebar(resumes: list = None):
             set_page("applications", clear_transient=False)
             st.rerun()
 
-# Wrappers de compatibilidade retroativa para testes e integrações externas
-def render_dashboard(resumes: list):
-    render_dashboard_view(resumes)
-
-def render_settings():
-    render_settings_view(clear_history_cache)
-
-def render_applications_list(resumes: list):
-    ui_render_apps_list(resumes)
-
 def main():
     apply_theme()
     st.logo(LOGO_PATH, size="large")
 
-    # Sincronização em segundo plano com o localStorage e cookie do navegador
-    curr_session = st.session_state.get("user_session", {})
-    curr_guest = curr_session.get("is_guest", True)
-    curr_token = active_token if not curr_guest else None
-    render_storage_sync(token=curr_token, is_logout=is_logout_event)
-
-    if is_logout_event:
-        st.session_state.pop("logged_out", None)
-        st.query_params.clear()
+    # Grava (login) ou expira (logout) o cookie de sessão no navegador
+    render_storage_sync(token=active_token, is_logout=st.session_state.get("logged_out", False))
 
     current_uid = st.session_state.user_session.get("user_id", "guest_local")
     resumes = get_cached_resumes(current_uid)

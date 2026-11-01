@@ -83,3 +83,15 @@ def test_login_success_stores_auth_token():
         assert st.session_state.user_session["user_id"] == "usr_abc"
         assert "auth_token" not in st.query_params
         mock_set_page.assert_called_with("dashboard")
+
+def test_login_and_signup_warn_local_mode():
+    st.session_state.clear()
+    for view in (auth_views.render_login_view, auth_views.render_signup_view):
+        with patch("streamlit.columns", side_effect=mock_columns), \
+             patch("streamlit.form"), \
+             patch("streamlit.text_input"), \
+             patch("streamlit.form_submit_button", return_value=False), \
+             patch("streamlit.button", return_value=False), \
+             patch("streamlit.warning") as mock_warn:
+            view()
+            assert "Modo local de desenvolvimento" in mock_warn.call_args[0][0]

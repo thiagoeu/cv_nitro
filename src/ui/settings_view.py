@@ -28,22 +28,16 @@ def render_settings_view(clear_history_cache_cb: Optional[Callable] = None):
                 if not db_status.get("user_profiles_ready"):
                     st.warning("A tabela `user_profiles` ainda não existe. Execute o script SQL abaixo no painel do Supabase.", icon=":material/warning:")
 
-                with st.container(horizontal=True):
-                    if st.button("Sincronizar histórico local", icon=":material/cloud_upload:", help="Envia currículos locais que ainda não foram para a nuvem"):
-                        with st.spinner("Sincronizando..."):
-                            n_sync = history_manager.sync_local_to_supabase()
-                            if clear_history_cache_cb:
-                                clear_history_cache_cb()
-                            st.success(f"{n_sync} currículo(s) local(is) sincronizado(s) no Supabase!")
-                            st.rerun()
-                    if st.button("Limpar registros de teste", icon=":material/cleaning_services:", help="Remove vagas criadas por testes"):
-                        n_del = history_manager.clean_test_records_from_supabase()
+                if st.button("Sincronizar histórico local", icon=":material/cloud_upload:", help="Envia seus currículos locais que ainda não foram para a nuvem"):
+                    with st.spinner("Sincronizando..."):
+                        n_sync = history_manager.sync_local_to_supabase(st.session_state.user_session.get("user_id"))
                         if clear_history_cache_cb:
                             clear_history_cache_cb()
-                        st.success(f"{n_del} registro(s) de teste removido(s) do Supabase!")
+                        st.success(f"{n_sync} currículo(s) local(is) sincronizado(s) no Supabase!")
                         st.rerun()
             else:
-                _status(False, "Supabase", "Usando armazenamento local: currículos salvos como Markdown na pasta history/.")
+                missing = ", ".join(f"`{name}`" for name in history_manager.missing_supabase_settings())
+                _status(False, "Supabase", f"Usando armazenamento local (pasta history/). Para ativar a nuvem, defina no .env: {missing}.")
 
     # 2. Provedores de IA & GitHub
     with col_ai:
@@ -57,15 +51,16 @@ def render_settings_view(clear_history_cache_cb: Optional[Callable] = None):
     with st.expander("Script de migração e RLS do Supabase (SQL Editor)", icon=":material/terminal:", expanded=not is_supa or not db_status.get("user_profiles_ready")):
         st.markdown("""
         Copie o script abaixo e cole no **SQL Editor** do painel Supabase para:
-        1. Criar tabelas com proteção RLS estrita (`auth.uid() = user_id`).
-        2. Ativar o trigger que inicializa automaticamente perfis quando novos usuários se cadastram.
+        1. Criar as tabelas com RLS fechado para a chave anon (o app acessa os dados com a service role, sempre filtrando por `user_id`).
+        2. Exigir `user_id` em toda gravação nova.
+        3. Ativar o trigger que inicializa automaticamente perfis quando novos usuários se cadastram.
         """)
         st.code(db_status.get("sql_script") or db_migrator.get_schema_sql(), language="sql")
 
     with st.expander("Dicas para economizar tokens e evitar limite de cota (429)", icon=":material/lightbulb:"):
         st.markdown("""
         - **Salve seu currículo base no Perfil:** você não precisa reenviar o arquivo toda vez.
-        - **Projetos em cache:** o cache de repositórios do Perfil evita consultas repetidas ao GitHub e corta até 50% do prompt enviado ao LLM.
+        - **Projetos em cache:** com o mesmo usuário do GitHub do Perfil, o Otimizador usa a lista de repositórios em cache e pula a listagem na API do GitHub (os READMEs dos 3 selecionados ainda são baixados).
         - **Desative a carta de apresentação** quando precisar só do currículo: economiza até 40% dos tokens por execução.
         - **Desative a auditoria rígida:** o modo econômico valida o currículo sem uma segunda rodada de LLM.
         - **Use o modelo Flash-Lite:** configure `GEMINI_MODEL=gemini-3.5-flash-lite` no `.env` para respostas mais rápidas e menor custo de cota.

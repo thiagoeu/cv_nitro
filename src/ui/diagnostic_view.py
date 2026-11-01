@@ -10,6 +10,10 @@ def render_ats_diagnostic_panel(diagnostic: Dict[str, Any]):
         st.info("Nenhum dado de diagnóstico detalhado registrado para esta candidatura.")
         return
 
+    # Falhas não fatais da execução (GitHub, revisor, carta) gravadas junto da candidatura
+    for warning in diagnostic.get("run_warnings") or []:
+        st.warning(warning, icon=":material/warning:")
+
     ats_score = int(diagnostic.get("ats_score", 80))
     matched_keywords = diagnostic.get("matched_keywords", [])
     applied_changes = diagnostic.get("applied_changes", [])

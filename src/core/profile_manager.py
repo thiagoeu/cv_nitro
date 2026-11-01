@@ -38,7 +38,7 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
         client = history_manager.get_supabase_client()
         if client:
             try:
-                res = client.table("user_profiles").select("*").eq("user_id", user_id).execute()
+                res = history_manager.owned(client.table("user_profiles").select("*"), user_id).execute()
                 if res.data and len(res.data) > 0:
                     row = res.data[0]
                     return {
@@ -95,8 +95,8 @@ def save_user_profile(user_id: str, profile_data: Dict[str, Any]) -> bool:
         "updated_at": now_iso
     }
 
-    # 1. Salva no Supabase
-    if history_manager.is_supabase_configured():
+    # 1. Salva no Supabase (o upsert grava o próprio user_id; visitante nunca vai à nuvem)
+    if history_manager.is_supabase_configured() and user_id != history_manager.GUEST_USER_ID:
         client = history_manager.get_supabase_client()
         if client:
             try:
@@ -116,12 +116,16 @@ def save_user_profile(user_id: str, profile_data: Dict[str, Any]) -> bool:
         print(f"Erro ao salvar perfil local: {e}")
         return False
 
+# Campos dos repositórios brutos da API do GitHub usados pelo relevance_ranker
+REPO_CACHE_FIELDS = ("name", "description", "language", "topics", "stargazers_count", "fork", "updated_at", "html_url", "default_branch")
+
 def update_cached_github_repos(user_id: str, repos: List[Dict[str, Any]]) -> bool:
     """
-    Atualiza apenas o cache de repositórios do GitHub do perfil do candidato.
+    Atualiza o cache de repositórios do perfil com a saída bruta do github_fetcher,
+    reduzida aos campos do ranker (o Otimizador reaproveita sem chamar a API).
     """
     profile = get_user_profile(user_id)
-    profile["cached_repos"] = repos
+    profile["cached_repos"] = [{field: r.get(field) for field in REPO_CACHE_FIELDS} for r in repos]
     return save_user_profile(user_id, profile)
 
 def get_cached_github_repos(user_id: str) -> List[Dict[str, Any]]:

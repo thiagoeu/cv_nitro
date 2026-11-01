@@ -49,12 +49,15 @@ def render_profile_view():
             if st.button("Atualizar projetos do GitHub", icon=":material/sync:", width="stretch", key="btn_sync_gh_cache", disabled=not github.strip()):
                 clear_transient_state()
                 with st.spinner(f"Buscando projetos públicos de @{github}..."):
-                    from src.agents.nodes import github_researcher
-                    gh_res = github_researcher({"github_username": github.strip(), "job_technologies": []})
-                    fetched = gh_res.get("github_repos", [])
+                    from src.agents.nodes import github_fetcher
+                    gh_res = github_fetcher({"github_username": github.strip()})
+                if gh_res.get("errors"):
+                    st.error(gh_res["errors"][0], icon=":material/error:")
+                else:
+                    fetched = gh_res.get("raw_github_repos", [])
                     profile_manager.update_cached_github_repos(uid, fetched)
-                st.toast(f"{len(fetched)} projeto(s) salvos no cache do seu perfil!", icon=":material/check_circle:")
-                st.rerun()
+                    st.toast(f"{len(fetched)} projeto(s) salvos no cache do seu perfil!", icon=":material/check_circle:")
+                    st.rerun()
             if repos:
                 with st.container(height=320, border=False):
                     for r in repos:

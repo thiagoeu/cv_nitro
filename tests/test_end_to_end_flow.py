@@ -42,20 +42,21 @@ def test_full_pipeline_mock():
         job_url=job_url,
         cover_letter=mock_cover_letter,
         language=job_lang,
-        technologies=job_techs
+        technologies=job_techs,
+        user_id="e2e-user"
     )
     
     assert os.path.exists(saved_file) or saved_file.startswith("supabase:")
     
     # 4. Carrega e valida persistência para o Dashboard
-    app_data = history_manager.load_application(saved_file)
+    app_data = history_manager.load_application(saved_file, "e2e-user")
     assert app_data["metadata"]["job_url"] == job_url
     assert app_data["metadata"]["language"] == "en"
     assert "Staff AI Agent Engineer" in app_data["resume_md"]
     assert "Dear Hiring Manager" in app_data["cover_letter_md"]
     
     # 5. Valida que o list_resumes inclui a nova aplicação
-    resumes = history_manager.list_resumes()
+    resumes = history_manager.list_resumes("e2e-user")
     matching = [r for r in resumes if r.get("job_url") == job_url]
     assert len(matching) > 0
     assert matching[0]["language"] == "en"
