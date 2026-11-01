@@ -29,12 +29,12 @@ def render_landing_view():
     # Botões de Ação Principais (CTAs)
     cta_col_left, cta_col_1, cta_col_2, cta_col_right = st.columns([1.5, 2.2, 2.2, 1.5])
     with cta_col_1:
-        if st.button("🚀 Criar Conta Grátis", type="primary", key="landing_btn_signup", use_container_width=True):
+        if st.button("🚀 Criar Conta Grátis", type="primary", key="landing_btn_signup", width="stretch"):
             set_page("signup")
             st.rerun()
 
     with cta_col_2:
-        if st.button("🔑 Já tenho conta / Entrar", type="secondary", key="landing_btn_login", use_container_width=True):
+        if st.button("🔑 Já tenho conta / Entrar", type="secondary", key="landing_btn_login", width="stretch"):
             set_page("login")
             st.rerun()
 

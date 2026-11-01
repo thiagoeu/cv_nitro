@@ -2,18 +2,15 @@ import streamlit as st
 from src.ui import navbar
 
 def test_navbar_page_navigation():
-    # Testa página padrão
     st.session_state.clear()
-    assert navbar.get_current_page() == "dashboard"
-    
+
     # Navega para wizard
     navbar.set_page("wizard")
-    assert navbar.get_current_page() == "wizard"
     assert st.session_state.current_page == "wizard"
-    
+
     # Navega para applications
     navbar.set_page("applications")
-    assert navbar.get_current_page() == "applications"
+    assert st.session_state.current_page == "applications"
     # A troca efetiva fica pendente para o render_navbar() aplicar no próximo rerun
     assert st.session_state["_nav_target"] == "applications"
 

@@ -229,3 +229,15 @@ def test_render_storage_sync_guest_noop():
     with patch("streamlit.components.v1.html") as mock_html:
         render_storage_sync(token=None, is_logout=False)
         assert not mock_html.called
+
+def test_dashboard_counts_technologies_case_insensitive():
+    from src.ui.dashboard_view import count_technologies
+    assert count_technologies(["AWS", "aws", "TypeScript", " ", None]) == {"AWS": 2, "TypeScript": 1}
+
+def test_graph_compiled_once_per_process():
+    import app
+    app.get_graph.clear()
+    with patch.object(app, "build_graph", side_effect=lambda: object()) as mock_build:
+        first, second = app.get_graph(), app.get_graph()
+    assert first is second
+    assert mock_build.call_count == 1

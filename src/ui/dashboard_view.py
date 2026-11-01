@@ -4,6 +4,14 @@ from collections import Counter
 from src.ui.navbar import set_page
 from src.ui.components import page_header, login_gate, application_card, THEME_TOKENS
 
+def count_technologies(technologies: list) -> Counter:
+    """Conta tecnologias sem diferenciar maiúsculas, exibindo a grafia mais frequente ("AWS", não "Aws")."""
+    names = [t.strip() for t in technologies if t and t.strip()]
+    spelling = {}
+    for name, _ in Counter(names).most_common():
+        spelling.setdefault(name.casefold(), name)
+    return Counter(spelling[name.casefold()] for name in names)
+
 def render_dashboard_view(resumes: list):
     """
     Renderiza o painel executivo de métricas e gráficos analíticos.
@@ -45,7 +53,7 @@ def render_dashboard_view(resumes: list):
         if diag and "ats_score" in diag:
             scores.append(diag["ats_score"])
 
-    tech_counter = Counter([t.strip().capitalize() for t in all_techs if t.strip()])
+    tech_counter = count_technologies(all_techs)
 
     # Cards de Métricas
     m1, m2, m3, m4 = st.columns(4)

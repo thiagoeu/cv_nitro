@@ -39,10 +39,6 @@ GUEST_ACCOUNT_LINKS = ["login", "signup"]
 AUTH_MAIN_LINKS = ["dashboard", "wizard", "applications", "profile"]
 AUTH_ACCOUNT_LINKS = ["settings", "logout"]
 
-# Aliases de compatibilidade retroativa
-MAIN_LINKS = AUTH_MAIN_LINKS
-ACCOUNT_LINKS = AUTH_ACCOUNT_LINKS
-
 def clear_transient_state():
     """
     Limpa mensagens de erro, alertas e estados transitórios do st.session_state
@@ -64,17 +60,6 @@ def set_page(page_name: str, clear_transient: bool = True):
     # Se estiver navegando para fora da visualização de detalhe de candidatura, fecha-a
     if page_name != "applications" and "viewing_history" in st.session_state:
         del st.session_state["viewing_history"]
-
-def get_current_page() -> str:
-    """Retorna a página atualmente ativa."""
-    if "current_page" in st.session_state:
-        return st.session_state.current_page
-    session = st.session_state.get("user_session")
-    if session and session.get("is_guest", True):
-        return "landing"
-    elif session and not session.get("is_guest", True):
-        return "dashboard"
-    return "dashboard"
 
 def render_navbar(views: Dict[str, Callable[[], None]]):
     """
