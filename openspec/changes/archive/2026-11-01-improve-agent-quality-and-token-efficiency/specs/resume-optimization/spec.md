@@ -17,6 +17,14 @@ O sistema SHALL consultar a API do GitHub do usuário para buscar repositórios 
 - **WHEN** a API do GitHub retornar erro HTTP (ex: 403 por rate limit, 404 por usuário inexistente ou timeout)
 - **THEN** o sistema registra a mensagem de falha na lista de erros do estado sem interromper a execução dos demais agentes
 
+#### Scenario: Usuário com formato inválido
+- **WHEN** o nome de usuário fornecido contém caracteres especiais inválidos ou tentativas de injeção
+- **THEN** o sistema rejeita a chamada de rede e retorna lista vazia de repositórios de forma segura
+
+#### Scenario: Timeout ou instabilidade na API externa
+- **WHEN** a API do GitHub demorar mais que o tempo limite configurado (timeout)
+- **THEN** o sistema aborta a requisição sem bloquear indefinidamente a aplicação
+
 ### Requirement: Revisar currículo gerado
 O sistema SHALL realizar verificações determinísticas de conformidade estrutural, integridade de repositórios e presença de termos ATS no currículo gerado, rejeitando alucinações e formatações inválidas antes de recorrer à auditoria por modelo de linguagem.
 
@@ -31,6 +39,10 @@ O sistema SHALL realizar verificações determinísticas de conformidade estrutu
 #### Scenario: Revisão em modo econômico
 - **WHEN** a execução estiver configurada em modo econômico (`strict_review=False`)
 - **THEN** o sistema valida o currículo e gera o diagnóstico de aderência de termos utilizando apenas as regras determinísticas, sem invocar o modelo auditor
+
+#### Scenario: Falha de API durante a auditoria
+- **WHEN** a API do auditor falhar ou exceder limites
+- **THEN** o revisor não aprova silenciosamente o documento e sinaliza o erro explicitamente no estado
 
 ## ADDED Requirements
 

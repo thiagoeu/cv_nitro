@@ -1,5 +1,11 @@
 schema: spec-driven
 
+context: |
+  Escreva todos os artefatos (proposal, specs, design, tasks) em português do Brasil.
+  Stack: Streamlit (UI), LangGraph + LangChain (pipeline multi-agente com Gemini e reserva Groq), Supabase (Postgres + Auth) com fallback local em arquivos.
+  Python 3.13, venv em ./venv.
+  Testes com pytest sem acesso à rede: Supabase e LLMs sempre mockados (ver tests/conftest.py).
+
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.
