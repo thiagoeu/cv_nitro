@@ -101,7 +101,10 @@ def test_quality_reviewer_strict_mode_with_diagnostic():
         result = quality_reviewer(state)
         assert result["reviewer_approved"] is True
         assert "diagnostic" in result
-        assert result["diagnostic"]["ats_score"] == 92
+        # Nota final = 60% determinística + 40% do revisor LLM
+        from src.agents.nodes import _validate_resume_deterministic
+        _, _, det = _validate_resume_deterministic(state["generated_resume_md"], state)
+        assert result["diagnostic"]["ats_score"] == int(det["ats_score"] * 0.6 + 92 * 0.4)
         assert len(result["diagnostic"]["applied_changes"]) == 3
         assert "Python" in result["diagnostic"]["matched_keywords"]
 

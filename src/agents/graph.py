@@ -4,7 +4,6 @@ from src.agents.nodes import (
     job_analyzer,
     github_fetcher,
     relevance_ranker,
-    github_researcher,
     resume_generator,
     section_patcher,
     quality_reviewer,

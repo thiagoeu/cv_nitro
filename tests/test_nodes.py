@@ -1,7 +1,6 @@
 from unittest.mock import patch, MagicMock
 from src.agents.nodes import (
     job_analyzer,
-    github_researcher,
     github_fetcher,
     relevance_ranker,
     resume_generator,
@@ -17,7 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 # Dummy fallback API key for testing structural parsing
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "dummy")
 
-def test_github_researcher_invalid_username():
+def test_github_fetcher_invalid_username():
     state = GraphState(
         job_description="",
         base_resume_md="",
@@ -34,11 +33,13 @@ def test_github_researcher_invalid_username():
         reviewer_approved=False,
         review_attempts=0
     )
-    result = github_researcher(state)
-    assert result["github_repos"] == []
-    assert result["github_readmes"] == {}
+    with patch("requests.get") as mock_get:
+        result = github_fetcher(state)
+        assert not mock_get.called
+    assert result["raw_github_repos"] == []
+    assert "inválido" in result["errors"][0]
 
-def test_github_researcher_with_mock():
+def test_github_fetcher_and_ranker_with_mock():
     state = GraphState(
         job_description="",
         base_resume_md="",
@@ -77,13 +78,15 @@ def test_github_researcher_with_mock():
 
     with patch("requests.get") as mock_get:
         mock_get.side_effect = [mock_repos_resp, mock_readme_resp]
-        result = github_researcher(state)
-        
+        result = relevance_ranker({**state, **github_fetcher(state)})
+
         # Valida que timeout foi repassado nas chamadas requests
         assert mock_get.call_count == 2
         for call_args in mock_get.call_args_list:
             assert "timeout" in call_args.kwargs
             assert call_args.kwargs["timeout"] == (5.0, 10.0)
+        assert "per_page=100" in mock_get.call_args_list[0].args[0]
+        assert mock_get.call_args_list[0].kwargs["headers"]["Accept"] == "application/vnd.github+json"
             
         assert len(result["github_repos"]) == 1
         assert "python-project" in result["github_readmes"]
@@ -118,28 +121,6 @@ def test_quality_reviewer_api_failure_does_not_approve():
         # Encerra o loop (regenerar com feedback de falha da API não ajuda) e avisa o usuário
         assert route_after_review(result) == "cover_letter_generator"
         assert "Revisor" in result["errors"][0]
-
-def test_quality_reviewer_max_attempts():
-    state = GraphState(
-        job_description="",
-        base_resume_md="",
-        github_username="",
-        job_url=None,
-        job_keywords=[],
-        job_technologies=[],
-        job_language="pt",
-        github_repos=[],
-        github_readmes={},
-        generated_resume_md="Generated resume",
-        generated_cover_letter_md=None,
-        reviewer_feedback=None,
-        reviewer_approved=False,
-        review_attempts=2
-    )
-    result = quality_reviewer(state)
-    assert result["reviewer_approved"] is False
-    assert "Limite de tentativas" in result["reviewer_feedback"]
-    assert result["review_attempts"] == 3
 
 def test_route_after_review():
     # Caso 1: Aprovado -> Cover Letter
@@ -337,64 +318,39 @@ def test_relevance_ranker_deterministic_ordering():
         # Forked repo não deve ser o primeiro
         assert "forked-repo" not in [s["name"] for s in selected]
 
-def test_resume_generator_with_tool_calling():
-    """
-    Testa o fluxo em que o LLM recebe a tool get_repo_deep_dive, emite uma tool_call
-    para detalhar um projeto, e gera o currículo incorporando os detalhes retornados.
-    """
+def test_resume_generator_single_call_with_readmes_in_prompt():
     state = _en_state(
         github_repos=[{"name": "nitro-app", "url": "https://github.com/test/nitro-app", "language": "Python", "description": "Nitro App", "relevance_score": 8.0}],
         github_readmes={"nitro-app": "## Arquitetura\nMicrosserviço de alta concorrência em FastAPI."}
     )
-
-    from langchain_core.messages import AIMessage
-
     mock_llm = MagicMock()
-    # 1ª resposta com tool call
-    resp_with_tool_call = AIMessage(
-        content="",
-        tool_calls=[{"name": "get_repo_deep_dive", "args": {"repo_name": "nitro-app"}, "id": "call_abc123"}]
-    )
-    # 2ª resposta após receber a ToolMessage com o README
-    final_resp = AIMessage(content="# Candidato Otimizado com Detalhes da Tool")
-
-    mock_bound = MagicMock()
-    mock_bound.invoke.return_value = resp_with_tool_call
-    mock_llm.bind_tools.return_value = mock_bound
-    # O mock_llm base deve ser chamado na segunda rodada com as mensagens acumuladas
-    mock_llm.invoke.return_value = final_resp
+    mock_llm.invoke.return_value = AIMessage(content="# Currículo")
 
     with patch("src.agents.nodes._llm", return_value=mock_llm):
         result = resume_generator(state)
-        assert result["generated_resume_md"] == "# Candidato Otimizado com Detalhes da Tool"
-        assert mock_bound.invoke.called
-        assert mock_llm.invoke.called
-        # Verifica que a 2ª chamada incluiu a ToolMessage com o extrato técnico
-        second_call_messages = mock_llm.invoke.call_args[0][0]
-        tool_msg = [m for m in second_call_messages if hasattr(m, "tool_call_id") and m.tool_call_id == "call_abc123"]
-        assert len(tool_msg) == 1
-        assert "FastAPI" in tool_msg[0].content
 
-def test_resume_generator_fallback_on_unsupported_tools():
-    """
-    Testa o fallback defensivo quando o modelo ou provedor falha ao chamar bind_tools.
-    Garante que o portfólio completo com READMEs seja injetado no prompt sem quebrar o fluxo.
-    """
-    state = _en_state(
-        github_repos=[{"name": "nitro-app", "url": "https://github.com/test/nitro-app", "language": "Python", "description": "Nitro App", "relevance_score": 8.0}],
-        github_readmes={"nitro-app": "Extrato de contingência"}
-    )
+    assert result["generated_resume_md"] == "# Currículo"
+    assert mock_llm.invoke.call_count == 1
+    assert not mock_llm.bind_tools.called
+    prompt_text = " ".join(m.content for m in mock_llm.invoke.call_args[0][0] if isinstance(m, HumanMessage))
+    assert "Microsserviço de alta concorrência em FastAPI" in prompt_text
+    assert "https://github.com/test/nitro-app" in prompt_text
 
-    mock_llm = MagicMock()
-    mock_llm.bind_tools.side_effect = NotImplementedError("Provedor não suporta tools")
-    mock_llm.invoke.return_value = AIMessage(content="# Currículo Gerado via Fallback Defensivo")
+def test_llm_clients_use_bounded_timeout(monkeypatch):
+    from src.agents.nodes import _llm
+    from src.core import config
+    monkeypatch.setattr(config, "GEMINI_FALLBACK_MODEL", "modelo-reserva")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "gsk-teste")
+    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as gemini, \
+         patch("src.agents.nodes.ChatGroq") as groq:
+        _llm(0)
+    calls = gemini.call_args_list + groq.call_args_list
+    assert len(calls) == 3
+    assert all(c.kwargs["timeout"] == 120 and c.kwargs["max_retries"] == 1 for c in calls)
 
-    with patch("src.agents.nodes._llm", return_value=mock_llm):
-        result = resume_generator(state)
-        assert result["generated_resume_md"] == "# Currículo Gerado via Fallback Defensivo"
-        # Verifica que no fallback o portfólio foi injetado nas mensagens
-        fallback_messages = mock_llm.invoke.call_args[0][0]
-        combined_text = " ".join([m.content for m in fallback_messages if isinstance(m, HumanMessage)])
-        assert "Extrato de contingência" in combined_text
-
-
+def test_github_fetcher_reuses_cached_repos():
+    cached = [{"name": "repo", "html_url": "https://github.com/octocat/repo"}]
+    with patch("requests.get") as mock_get:
+        res = github_fetcher({"github_username": "octocat", "raw_github_repos": cached})
+    assert not mock_get.called
+    assert res == {"raw_github_repos": cached}

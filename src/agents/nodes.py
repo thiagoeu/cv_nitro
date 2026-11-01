@@ -7,10 +7,11 @@ from typing import List, Literal, Optional
 from src.core import config
 import requests
 import base64
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
 
 MAX_REVIEW_ATTEMPTS = 2
+LLM_TIMEOUT_SECONDS = 120
+GITHUB_TIMEOUT = (5.0, 10.0)
 
 # Rótulos canônicos por idioma: o template do prompt usa estes valores para não vazar português em vagas EN/ES.
 LABELS = {
@@ -43,16 +44,16 @@ LABELS = {
 def _llm(temperature: float, thinking_level: Optional[str] = "low") -> ChatGoogleGenerativeAI:
     """Cliente Gemini único: timeout/retries limitados evitam travar a UI; thinking 'low' corta a latência nas tarefas curtas."""
     extra = {"thinking_level": thinking_level} if thinking_level else {}
-    # O gerador com thinking padrão já levou ~150s numa chamada: 300s dá folga sem esperar para sempre.
+    # 120s por tentativa e 1 retry por modelo: a cadeia de fallbacks cuida do resto (pior caso ~12 min, não ~45)
     def make(model: str) -> ChatGoogleGenerativeAI:
-        return ChatGoogleGenerativeAI(model=model, temperature=temperature, timeout=300, max_retries=2, **extra)
+        return ChatGoogleGenerativeAI(model=model, temperature=temperature, timeout=LLM_TIMEOUT_SECONDS, max_retries=1, **extra)
     fallbacks = []
     if config.GEMINI_FALLBACK_MODEL and config.GEMINI_FALLBACK_MODEL != config.GEMINI_MODEL:
         fallbacks.append(make(config.GEMINI_FALLBACK_MODEL))
     if config.GROQ_API_KEY:
         # Tokens de raciocínio contam no limite por minuto do Groq; só o gpt-oss aceita "low".
         groq_extra = {"reasoning_effort": thinking_level} if thinking_level and config.GROQ_MODEL.startswith("openai/gpt-oss") else {}
-        fallbacks.append(ChatGroq(model=config.GROQ_MODEL, temperature=temperature, timeout=300, max_retries=2, **groq_extra))
+        fallbacks.append(ChatGroq(model=config.GROQ_MODEL, temperature=temperature, timeout=LLM_TIMEOUT_SECONDS, max_retries=1, **groq_extra))
     if not fallbacks:
         return make(config.GEMINI_MODEL)
     # Cadeia plana (with_fallbacks aninhado perde os reservas no with_structured_output).
@@ -204,11 +205,22 @@ def _clean_readme(raw_markdown: str, max_chars: int = 1200) -> str:
         return truncated[:last_break].strip() + "\n..."
     return truncated.strip() + "..."
 
+def _github_headers() -> dict:
+    headers = {"Accept": "application/vnd.github+json"}
+    token = config.GITHUB_TOKEN
+    if token and "your_github_token_here" not in token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
 def github_fetcher(state: dict) -> dict:
     """
     Busca repositórios públicos brutos do usuário no GitHub de forma independente.
     Executa concorrentemente com o job_analyzer na entrada do grafo.
+    Repositórios já presentes no estado (cache do perfil) são reaproveitados sem chamar a API.
     """
+    if state.get("raw_github_repos"):
+        return {"raw_github_repos": state["raw_github_repos"]}
+
     username = (state.get("github_username") or "").strip()
     if not username:
         return {"raw_github_repos": []}
@@ -219,16 +231,10 @@ def github_fetcher(state: dict) -> dict:
         print(msg)
         return {"raw_github_repos": [], "errors": [msg]}
 
-    headers = {"Accept": "application/vnd.github.mercy-preview+json"}
-    token = config.GITHUB_TOKEN
-    if token and "your_github_token_here" not in token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    repos_url = f"https://api.github.com/users/{username}/repos?type=public&sort=updated&per_page=30"
-    request_timeout = (5.0, 10.0)
+    repos_url = f"https://api.github.com/users/{username}/repos?type=public&sort=updated&per_page=100"
 
     try:
-        response = requests.get(repos_url, headers=headers, timeout=request_timeout)
+        response = requests.get(repos_url, headers=_github_headers(), timeout=GITHUB_TIMEOUT)
         if response.status_code == 403:
             msg = "Limite de requisições da API do GitHub atingido (HTTP 403). Configure GITHUB_TOKEN no .env."
             print(msg)
@@ -261,16 +267,9 @@ def relevance_ranker(state: dict) -> dict:
     Recebe os repositórios do github_fetcher e as tecnologias da vaga do job_analyzer.
     Ranqueia por relevância ponderada, seleciona os Top 3 e baixa seus READMEs limpos.
     """
-    raw_repos = state.get("raw_github_repos")
+    raw_repos = state.get("raw_github_repos") or []
     username = (state.get("github_username") or "").strip()
     technologies = state.get("job_technologies", []) or []
-
-    # Se raw_github_repos não estiver presente (execução avulsa), busca sob demanda
-    if raw_repos is None:
-        fetch_res = github_fetcher(state)
-        raw_repos = fetch_res.get("raw_github_repos", [])
-        if "errors" in fetch_res:
-            return {"github_repos": [], "github_readmes": {}, "errors": fetch_res["errors"]}
 
     if not raw_repos or not username:
         return {"github_repos": [], "github_readmes": {}}
@@ -298,12 +297,6 @@ def relevance_ranker(state: dict) -> dict:
             "relevance_score": score
         })
 
-    headers = {"Accept": "application/vnd.github.mercy-preview+json"}
-    token = config.GITHUB_TOKEN
-    if token and "your_github_token_here" not in token:
-        headers["Authorization"] = f"Bearer {token}"
-    request_timeout = (5.0, 10.0)
-
     readmes = {}
     for repo in selected_repos:
         repo_name = repo["name"]
@@ -311,7 +304,7 @@ def relevance_ranker(state: dict) -> dict:
             continue
         readme_url = f"https://api.github.com/repos/{username}/{repo_name}/readme"
         try:
-            readme_resp = requests.get(readme_url, headers=headers, timeout=request_timeout)
+            readme_resp = requests.get(readme_url, headers=_github_headers(), timeout=GITHUB_TIMEOUT)
             if readme_resp.status_code == 200:
                 content_b64 = readme_resp.json().get("content", "")
                 content_str = base64.b64decode(content_b64).decode("utf-8", errors="replace")
@@ -323,19 +316,6 @@ def relevance_ranker(state: dict) -> dict:
         "github_repos": selected_repos,
         "github_readmes": readmes
     }
-
-def github_researcher(state: dict) -> dict:
-    """
-    Wrapper mantido para retrocompatibilidade:
-    Executa busca e ranqueamento em etapa única quando invocado isoladamente.
-    """
-    fetch_res = github_fetcher(state)
-    merged_state = {**state, **fetch_res}
-    rank_res = relevance_ranker(merged_state)
-    errors = fetch_res.get("errors", []) + rank_res.get("errors", [])
-    if errors:
-        rank_res["errors"] = errors
-    return rank_res
 
 def _portfolio_context(state: dict, readme_chars: int = 1200) -> str:
     context = ""
@@ -349,49 +329,11 @@ def _portfolio_context(state: dict, readme_chars: int = 1200) -> str:
         )
     return context
 
-def _portfolio_summary(state: dict) -> str:
-    """Gera metadados enxutos dos repositórios sem concatenar os textos dos READMEs (economia de tokens)."""
-    repos = state.get("github_repos", [])
-    if not repos:
-        return "Nenhum repositório do GitHub fornecido."
-    lines = []
-    for r in repos:
-        name = r.get("name", "")
-        url = r.get("url", "")
-        lang = r.get("language", "")
-        desc = r.get("description", "")
-        score = r.get("relevance_score", 0.0)
-        lines.append(f"- **{name}** ({lang}) [Score: {score:.1f}]: {desc}\n  URL: {url}")
-    return "\n".join(lines)
-
-@tool
-def get_repo_deep_dive(repo_name: str) -> str:
-    """
-    Retorna o extrato técnico detalhado do README de um repositório do portfólio do candidato
-    para detalhar stack, arquitetura e diferenciais de implementação no currículo.
-    """
-    return f"Extrato técnico do repositório {repo_name}."
-
-def make_repo_deep_dive_tool(readmes: dict):
-    """Cria uma tool com escopo em memória nos readmes limpos selecionados."""
-    @tool
-    def get_repo_deep_dive(repo_name: str) -> str:
-        """
-        Retorna o extrato técnico detalhado do README de um repositório do portfólio do candidato
-        para detalhar stack, arquitetura e diferenciais de implementação no currículo.
-        """
-        clean_name = (repo_name or "").strip().lower()
-        for name, content in readmes.items():
-            if name.lower() == clean_name or clean_name in name.lower():
-                return content if content else "README vazio ou sem extrato técnico."
-        return f"README não encontrado para o repositório '{repo_name}'."
-    return get_repo_deep_dive
-
 def resume_generator(state: dict) -> dict:
     """
     Gera um novo currículo em Markdown com formatação de alta fidelidade e aderência ATS,
     no idioma da vaga (traduzindo o currículo base), com tabela de habilidades e bullets de impacto.
-    Utiliza Prompt Caching com prefixos imutáveis e Tool-Calling sob demanda para READMEs.
+    Uma única chamada: os extratos higienizados dos READMEs (top 3) vão direto no prompt.
     """
     base_resume = state.get("base_resume_md", "")
     job_desc = _job_context(state)
@@ -455,71 +397,17 @@ REGRAS CRÍTICAS:
    - NUNCA use verbos na 3ª pessoa (ex.: "Atua", "Constrói", "Desenvolveu", "Implementou"), pois soa impessoal e retira a autoria do candidato.
 7. Retorne APENAS o Markdown do currículo, sem comentários e sem cercas de código (```)."""
 
-    readmes = state.get("github_readmes", {})
-    repo_tool = make_repo_deep_dive_tool(readmes)
-    repos_summary = _portfolio_summary(state)
     feedback_text = f"\n\nATENÇÃO! O revisor rejeitou a versão anterior pelo seguinte motivo: {feedback}. Ajuste o currículo rigorosamente conforme esse feedback." if feedback else ""
+    portfolio = _portfolio_context(state, 1200) or "Nenhum repositório do GitHub fornecido."
 
-    # 2. Arranjo de mensagens otimizado para Cache de Prefixo:
-    # [0] System (regras imutáveis) -> [1] Base resume (estático do usuário) -> [2] Vaga + Portfólio (volátil)
+    # Prefixo estável primeiro (regras -> currículo base) para aproveitar o cache implícito de prompt
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"--- CURRÍCULO BASE DO CANDIDATO ---\n{base_resume}"),
-        HumanMessage(content=(
-            f"--- VAGA ALVO ---\n{job_desc}\n\n"
-            f"--- REPOSITÓRIOS EM DESTAQUE ---\n{repos_summary}\n\n"
-            f"Se precisar de detalhes técnicos aprofundados de qualquer repositório acima, acione a ferramenta 'get_repo_deep_dive'.{feedback_text}"
-        ))
+        HumanMessage(content=f"--- VAGA ALVO ---\n{job_desc}\n\n--- PORTFÓLIO GITHUB ---\n{portfolio}{feedback_text}")
     ]
-
-    llm_instance = _llm(temperature=0.2, thinking_level=None)
-
-    # 3. Execução com Tool Calling e Fallback Defensivo
-    try:
-        from unittest.mock import MagicMock
-        if isinstance(llm_instance, MagicMock) and not getattr(llm_instance.bind_tools, "_mock_return_value", None):
-            response = llm_instance.invoke(messages)
-        elif hasattr(llm_instance, "bind_tools"):
-            llm_with_tools = llm_instance.bind_tools([repo_tool])
-            response = llm_with_tools.invoke(messages)
-            
-            tool_calls = getattr(response, "tool_calls", None)
-            if tool_calls:
-                tool_messages = []
-                for call in tool_calls:
-                    call_name = call.get("name")
-                    call_args = call.get("args", {})
-                    call_id = call.get("id")
-                    if call_name == "get_repo_deep_dive":
-                        tool_output = repo_tool.invoke(call_args)
-                    else:
-                        tool_output = "Ferramenta desconhecida."
-                    tool_messages.append(ToolMessage(content=str(tool_output), tool_call_id=call_id))
-                
-                final_response = llm_instance.invoke(messages + [response] + tool_messages)
-                return {"generated_resume_md": _text(final_response)}
-        else:
-            raise NotImplementedError("bind_tools não suportado pelo provedor ativo.")
-        
-        return {"generated_resume_md": _text(response)}
-    except Exception as e:
-        # Fallback defensivo: se tool calling falhar ou o modelo não suportar bind_tools
-        # Se for um erro crítico de quota ou modelo ausente, propaga
-        err_msg = str(e).lower()
-        if "404" in err_msg or "429" in err_msg or "resource_exhausted" in err_msg:
-            raise e
-        
-        fallback_portfolio = _portfolio_context(state, 1200)
-        fallback_messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=f"--- CURRÍCULO BASE DO CANDIDATO ---\n{base_resume}"),
-            HumanMessage(content=(
-                f"--- VAGA ALVO ---\n{job_desc}\n\n"
-                f"--- PORTFÓLIO GITHUB ---\n{fallback_portfolio}{feedback_text}"
-            ))
-        ]
-        response = llm_instance.invoke(fallback_messages)
-        return {"generated_resume_md": _text(response)}
+    response = _llm(temperature=0.2, thinking_level=None).invoke(messages)
+    return {"generated_resume_md": _text(response)}
 
 def _term_in_text(term: str, text_lower: str) -> bool:
     """Verifica presença de termo técnico respeitando limites de palavras sem falso positivo."""
@@ -530,13 +418,34 @@ def _term_in_text(term: str, text_lower: str) -> bool:
     pattern = rf"(?<![a-zA-Z0-9]){re.escape(term_clean)}(?![a-zA-Z0-9])"
     return bool(re.search(pattern, text_lower))
 
+PLACEHOLDER_RE = re.compile(r"<[A-Za-zÀ-ÿ0-9\s/—–_.,:-]+>")
+EMAIL_IN_BRACKETS_RE = re.compile(r"^<[^@\s]+@[^@\s]+\.[^@\s]+>$")
+
+def _unfilled_placeholders(markdown: str):
+    """Marcadores <...> não substituídos; e-mails no formato <usuario@dominio> não contam."""
+    return [m for m in PLACEHOLDER_RE.finditer(markdown) if not EMAIL_IN_BRACKETS_RE.match(m.group())]
+
+def _critical_patch_section(generated_md: str, critical_issues: list, labels: dict) -> Optional[str]:
+    """
+    Seção a refinar para um problema crítico determinístico, no idioma da vaga.
+    URL de repositório fora do portfólio -> seção de projetos; marcador -> último '## ' antes dele.
+    None quando não identificável (ex.: marcador no cabeçalho, antes da primeira seção).
+    """
+    if any("repositório citado" in issue for issue in critical_issues):
+        return labels["projects"]
+    unfilled = _unfilled_placeholders(generated_md)
+    if unfilled:
+        headers = re.findall(r"(?m)^##\s+(.+?)\s*$", generated_md[:unfilled[0].start()])
+        return headers[-1] if headers else None
+    return None
+
 def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool, list[str], dict]:
     """
     Auditoria determinística Tier 1 (0 tokens de LLM):
     1. Placeholders residuais (<Nome>, <Empresa>, etc.) - Crítico
     2. Integridade de URLs de repositórios citados vs repositórios obtidos do GitHub - Crítico
     3. Conformidade da tabela de habilidades (aviso e cálculo estrutural)
-    4. Mapeamento real de termos da vaga e cálculo auditável de ATS (50 a 98)
+    4. Mapeamento real de termos da vaga e cálculo auditável de ATS (0 a 100, linear)
     """
     critical_issues = []
     warnings = []
@@ -544,8 +453,7 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
 
     # 1. Placeholders residuais: detecta padrões como <Nome>, <Cargo alvo...>, <Cidade, UF>
     # Excetua endereços de e-mail no formato <usuario@dominio.com>
-    placeholders = re.findall(r"<[A-Za-zÀ-ÿ0-9\s/—–_.,:-]+>", generated_md)
-    unfilled = [p for p in placeholders if not re.match(r"^<[^@\s]+@[^@\s]+\.[^@\s]+>$", p)]
+    unfilled = [m.group() for m in _unfilled_placeholders(generated_md)]
     if unfilled:
         sample = ", ".join(unfilled[:3])
         critical_issues.append(f"O currículo contém marcadores de preenchimento não substituídos: {sample}")
@@ -594,7 +502,7 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
     structural_rate = max(0.4, 1.0 - structural_penalties)
 
     base_score = (0.50 * tech_rate) + (0.25 * keyword_rate) + (0.25 * structural_rate)
-    ats_score = int(min(98, max(50, round(50 + base_score * 48))))
+    ats_score = int(min(100, max(0, round(base_score * 100))))
 
     applied_changes = [
         f"Alinhamento comprovado de {len(matched_techs)} tecnologias da vaga no histórico",
@@ -717,75 +625,43 @@ def quality_reviewer(state: dict) -> dict:
     """
     attempts = state.get("review_attempts", 0)
     generated_md = state.get("generated_resume_md", "") or ""
-
-    if attempts >= MAX_REVIEW_ATTEMPTS:
-        _, _, diag = _validate_resume_deterministic(generated_md, state)
-        return {
-            "reviewer_approved": False,
-            "reviewer_feedback": "Limite de tentativas de revisão atingido. Prosseguindo com versão atual.",
-            "review_attempts": attempts + 1,
-            "review_severity": "approved",
-            "patch_section": None,
-            "patch_instruction": None,
-            "diagnostic": {
-                "ats_score": diag["ats_score"],
-                "matched_keywords": diag["matched_keywords"],
-                "applied_changes": diag["applied_changes"],
-                "reviewer_summary": "Limite de revisões atingido; versão preservada para o usuário."
-            }
-        }
+    L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
+    strict = state.get("strict_review", True)
 
     # Validação determinística preliminar (Tier 1 - zero tokens)
     is_valid, critical_issues, diag = _validate_resume_deterministic(generated_md, state)
 
-    # Modo econômico (strict_review=False): utiliza apenas o diagnóstico determinístico
-    if not state.get("strict_review", True):
-        feedback_eco = "Aprovado em modo econômico com validação estrutural determinística." if is_valid else f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}."
+    def verdict(approved: bool, feedback: str, severity: str, section: Optional[str] = None) -> dict:
         return {
-            "reviewer_approved": True,
-            "reviewer_feedback": feedback_eco,
-            "review_attempts": attempts + 1,
-            "review_severity": "approved",
-            "patch_section": None,
-            "patch_instruction": None,
-            "diagnostic": {
-                "ats_score": diag["ats_score"],
-                "matched_keywords": diag["matched_keywords"],
-                "applied_changes": diag["applied_changes"],
-                "reviewer_summary": feedback_eco
-            }
-        }
-
-    # Em modo estrito, se falhar em checagem crítica determinística (placeholder, link falso), classifica severidade de imediato
-    if not is_valid:
-        feedback_det = "Ajustes necessários no currículo: " + "; ".join(critical_issues) + "."
-        # Detecta seção afetada pelo erro crítico
-        target_sec = None
-        severity = "major"
-        if any("repositório citado" in iss.lower() for iss in critical_issues):
-            target_sec = "PROJETOS EM DESTAQUE"
-            severity = "minor"
-        elif any("tabela" in iss.lower() for iss in critical_issues):
-            target_sec = "HABILIDADES TÉCNICAS"
-            severity = "minor"
-
-        return {
-            "reviewer_approved": False,
-            "reviewer_feedback": feedback_det,
+            "reviewer_approved": approved,
+            "reviewer_feedback": feedback,
             "review_attempts": attempts + 1,
             "review_severity": severity,
-            "patch_section": target_sec,
-            "patch_instruction": feedback_det,
+            "patch_section": section,
+            "patch_instruction": None if approved else feedback,
             "diagnostic": {
                 "ats_score": diag["ats_score"],
                 "matched_keywords": diag["matched_keywords"],
                 "applied_changes": diag["applied_changes"],
-                "reviewer_summary": feedback_det
+                "reviewer_summary": feedback
             }
         }
 
+    if not is_valid:
+        feedback_det = "Ajustes necessários no currículo: " + "; ".join(critical_issues) + "."
+        target_sec = _critical_patch_section(generated_md, critical_issues, L)
+        if strict:
+            return verdict(False, feedback_det, "minor" if target_sec else "major", target_sec)
+        # Modo econômico: um único refinamento da seção afetada, sem revisor LLM nem reescrita completa
+        if target_sec and attempts == 0:
+            return verdict(False, feedback_det, "minor", target_sec)
+        return verdict(True, f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}.", "approved")
+
+    # Modo econômico (strict_review=False): utiliza apenas o diagnóstico determinístico
+    if not strict:
+        return verdict(True, "Aprovado em modo econômico com validação estrutural determinística.", "approved")
+
     # Tier 2: Auditoria semântica fina com LLM apenas se passou no Tier 1
-    L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
     try:
         structured_llm = _llm(temperature=0).with_structured_output(ReviewResult)
         prompt = PromptTemplate.from_template(

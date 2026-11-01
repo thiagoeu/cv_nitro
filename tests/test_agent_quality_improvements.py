@@ -4,7 +4,7 @@ from src.agents.nodes import (
     _score_repository,
     _clean_readme,
     _validate_resume_deterministic,
-    github_researcher,
+    github_fetcher,
     quality_reviewer,
     section_patcher,
     splice_markdown_section,
@@ -214,7 +214,7 @@ def test_quality_reviewer_economic_mode_zero_tokens():
         assert "Aprovado em modo econômico" in result["reviewer_feedback"]
         assert result["diagnostic"]["ats_score"] >= 80
 
-def test_github_researcher_handles_rate_limit_gracefully():
+def test_github_fetcher_handles_rate_limit_gracefully():
     state = GraphState(
         job_description="",
         base_resume_md="",
@@ -235,8 +235,8 @@ def test_github_researcher_handles_rate_limit_gracefully():
     mock_resp.status_code = 403
 
     with patch("requests.get", return_value=mock_resp):
-        result = github_researcher(state)
-        assert result["github_repos"] == []
+        result = github_fetcher(state)
+        assert result["raw_github_repos"] == []
         assert "errors" in result
         assert any("403" in err for err in result["errors"])
 
@@ -342,3 +342,98 @@ def test_route_after_review_minor_vs_major():
     }
     assert route_after_review(state_minor_no_section) == "resume_generator"
 
+
+
+EN_RESUME_WITH_FAKE_REPO = """# John Doe
+### Backend Engineer
+Remote | john@doe.com
+
+## PROFESSIONAL SUMMARY
+Python engineer.
+
+## TECHNICAL SKILLS
+| Category | Technologies & Concepts |
+| :--- | :--- |
+| Back-end | Python |
+
+## KEY PROJECTS
+### Fake Project — Invented
+- **Repository:** https://github.com/johndoe/invented-repo
+
+## EDUCATION
+### BSc Computer Science
+"""
+
+FIXED_PROJECTS = "## KEY PROJECTS\n### Real Project\n- **Repository:** https://github.com/johndoe/real-repo"
+
+def _en_review_state(**overrides):
+    state = {
+        "generated_resume_md": EN_RESUME_WITH_FAKE_REPO,
+        "github_repos": [{"name": "real-repo", "url": "https://github.com/johndoe/real-repo"}],
+        "github_username": "johndoe",
+        "job_technologies": ["Python"],
+        "job_keywords": [],
+        "job_language": "en",
+        "review_attempts": 0,
+        "strict_review": True,
+    }
+    state.update(overrides)
+    return state
+
+def test_reviewer_targets_localized_section_and_patch_applies():
+    result = quality_reviewer(_en_review_state())
+    assert result["review_severity"] == "minor"
+    assert result["patch_section"] == "KEY PROJECTS"
+
+    patched = splice_markdown_section(EN_RESUME_WITH_FAKE_REPO, result["patch_section"], FIXED_PROJECTS)
+    assert "invented-repo" not in patched
+    assert "real-repo" in patched
+    assert "## EDUCATION" in patched
+
+def test_reviewer_placeholder_section_and_header_fallback():
+    body = "# John\n### Role\nRemote\n\n## PROFESSIONAL SUMMARY\nI build <Main stack> systems.\n\n## EDUCATION\nBSc"
+    strict_body = quality_reviewer(_en_review_state(generated_resume_md=body, github_repos=[]))
+    assert (strict_body["review_severity"], strict_body["patch_section"]) == ("minor", "PROFESSIONAL SUMMARY")
+
+    header_only = "# <Full name>\n### Role\n\n## PROFESSIONAL SUMMARY\nText"
+    strict_header = quality_reviewer(_en_review_state(generated_resume_md=header_only, github_repos=[]))
+    assert (strict_header["review_severity"], strict_header["patch_section"]) == ("major", None)
+
+def test_economic_mode_patches_critical_issue_once():
+    first = quality_reviewer(_en_review_state(strict_review=False))
+    assert first["reviewer_approved"] is False
+    assert (first["review_severity"], first["patch_section"]) == ("minor", "KEY PROJECTS")
+    # Na segunda passagem o modo econômico aprova e registra o que restou, sem novo patch
+    second = quality_reviewer(_en_review_state(strict_review=False, review_attempts=1))
+    assert second["reviewer_approved"] is True
+    assert "invented-repo" in second["diagnostic"]["reviewer_summary"]
+
+def test_economic_graph_runs_single_patch_without_reviewer_llm():
+    from src.agents.graph import build_graph
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(text=FIXED_PROJECTS)
+
+    with patch("src.agents.graph.job_analyzer", return_value={"job_technologies": ["Python"], "job_keywords": [], "job_language": "en"}), \
+         patch("src.agents.graph.github_fetcher", return_value={"raw_github_repos": []}), \
+         patch("src.agents.graph.relevance_ranker", return_value={"github_repos": [{"name": "real-repo", "url": "https://github.com/johndoe/real-repo"}], "github_readmes": {}}), \
+         patch("src.agents.graph.resume_generator", return_value={"generated_resume_md": EN_RESUME_WITH_FAKE_REPO}) as mock_gen, \
+         patch("src.agents.nodes._llm", return_value=mock_llm) as llm_factory:
+        final = build_graph().invoke({
+            "job_description": "Python", "base_resume_md": "cv", "github_username": "johndoe",
+            "review_attempts": 0, "strict_review": False, "generate_cover_letter": False,
+        })
+
+    assert mock_gen.call_count == 1
+    assert llm_factory.call_count == 1  # só o section_patcher chamou um modelo
+    assert not mock_llm.with_structured_output.called  # revisor LLM não foi acionado
+    assert "invented-repo" not in final["generated_resume_md"]
+    assert final["reviewer_approved"] is True
+
+def test_ats_score_is_linear_without_floor():
+    state = {"github_repos": [], "github_username": "", "job_technologies": ["Rust", "Go"], "job_keywords": ["Kafka"]}
+    _, _, no_match = _validate_resume_deterministic("# Fulano\nSem termos da vaga.", state)
+    assert no_match["ats_score"] < 50
+
+    full = "# Fulano\n| a | b |\n| :--- | :--- |\n| Stack | Rust, Go, Kafka |"
+    _, _, all_match = _validate_resume_deterministic(full, state)
+    assert all_match["ats_score"] == 100
