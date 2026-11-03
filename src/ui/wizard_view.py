@@ -35,6 +35,8 @@ def build_initial_state(
         job_language="pt",
         github_repos=[],
         github_readmes={},
+        verified_technologies=None,
+        unmatched_gaps=None,
         generated_resume_md=None,
         generated_cover_letter_md=None,
         reviewer_feedback=None,

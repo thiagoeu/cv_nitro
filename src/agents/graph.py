@@ -4,6 +4,7 @@ from src.agents.nodes import (
     job_analyzer,
     github_fetcher,
     relevance_ranker,
+    competency_matcher,
     resume_generator,
     section_patcher,
     quality_reviewer,
@@ -44,6 +45,7 @@ def build_graph():
     workflow.add_node("job_analyzer", job_analyzer)
     workflow.add_node("github_fetcher", github_fetcher)
     workflow.add_node("relevance_ranker", relevance_ranker)
+    workflow.add_node("competency_matcher", competency_matcher)
     workflow.add_node("resume_generator", resume_generator)
     workflow.add_node("section_patcher", section_patcher)
     workflow.add_node("quality_reviewer", quality_reviewer)
@@ -57,8 +59,9 @@ def build_graph():
     workflow.add_edge("job_analyzer", "relevance_ranker")
     workflow.add_edge("github_fetcher", "relevance_ranker")
     
-    # Sequência de geração e revisão
-    workflow.add_edge("relevance_ranker", "resume_generator")
+    # Mapeamento de competências e sequência de geração
+    workflow.add_edge("relevance_ranker", "competency_matcher")
+    workflow.add_edge("competency_matcher", "resume_generator")
     workflow.add_edge("resume_generator", "quality_reviewer")
     
     # Seção cirúrgica retorna ao revisor para checagem rápida

@@ -165,7 +165,6 @@ O sistema SHALL disparar a análise textual da vaga e a consulta à API de repos
 - **WHEN** o grafo é iniciado com os dados da vaga e o nome de usuário do GitHub
 - **THEN** as requisições de análise de requisitos e de listagem de repositórios são executadas em paralelo
 
-
 ### Requirement: Preservar melhor versão e interromper revisão por estagnação
 O sistema SHALL manter um snapshot da versão de currículo com a maior pontuação ATS durante o ciclo de revisão, interrompendo novas rodadas caso uma revisão não supere a melhor nota anterior e restaurando automaticamente a versão de maior pontuação.
 
@@ -183,3 +182,14 @@ O sistema SHALL realizar o download dos arquivos README dos repositórios seleci
 #### Scenario: Download concorrente dos Top 3 READMEs
 - **WHEN** o nó de ranqueamento seleciona múltiplos repositórios relevantes do candidato
 - **THEN** as requisições para obtenção dos conteúdos de README são disparadas concorrentemente respeitando o tempo limite configurado
+
+### Requirement: Mapear competências comprovadas e isolar pendências técnicas
+O sistema SHALL classificar previamente os requisitos da vaga contra o perfil e portfólio do candidato em tecnologias comprovadas (diretas ou equivalentes) e pendências técnicas reais, proibindo estritamente a inserção de pendências técnicas na tabela de habilidades ou experiências profissionais do currículo gerado.
+
+#### Scenario: Vaga com requisitos não comprovados pelo histórico
+- **WHEN** a vaga exige tecnologias ausentes no currículo base e no portfólio do candidato (como C# ou .NET para perfil Node/React)
+- **THEN** o sistema classifica esses termos estritamente como pendências técnicas e proíbe o gerador de atribuí-los às experiências profissionais ou à tabela de habilidades
+
+#### Scenario: Uso exclusivo de repositórios comprovados em projetos
+- **WHEN** a seção de projetos em destaque é redigida
+- **THEN** o gerador utiliza exclusivamente os repositórios selecionados no portfólio comprovado do GitHub com suas respectivas URLs

@@ -134,8 +134,9 @@ def test_graph_topology_fan_out_and_scatter_gather():
     assert ("job_analyzer", "relevance_ranker") in edge_pairs
     assert ("github_fetcher", "relevance_ranker") in edge_pairs
     
-    # 3. Continuidade para o gerador
-    assert ("relevance_ranker", "resume_generator") in edge_pairs
+    # 3. Continuidade para o competency_matcher e gerador
+    assert ("relevance_ranker", "competency_matcher") in edge_pairs
+    assert ("competency_matcher", "resume_generator") in edge_pairs
 
 def test_graph_execution_scatter_gather_merging():
     """

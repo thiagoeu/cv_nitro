@@ -19,6 +19,10 @@ class GraphState(TypedDict):
     github_repos: List[Dict[str, Any]]
     github_readmes: Dict[str, str]  # repo_name -> readme_content
     
+    # Processado pelo Competency Matcher (Fronteira Factual e Pendências Técnicas)
+    verified_technologies: Optional[List[str]]
+    unmatched_gaps: Optional[List[str]]
+    
     # Processado pelo Resume Generator
     generated_resume_md: Optional[str]
     

@@ -356,3 +356,76 @@ def test_github_fetcher_reuses_cached_repos():
     assert res["raw_github_repos"] == cached
     assert "agent_trace" in res
     assert res["agent_trace"][0]["agent"] == "github_fetcher"
+
+
+def test_validate_resume_deterministic_semantic_equivalences_and_factual_lock():
+    from src.agents.nodes import _validate_resume_deterministic
+
+    state = {
+        "job_technologies": ["HTML", "SQL", "APIs REST", "Inteligência Artificial Generativa", "C#"],
+        "job_keywords": ["Git"],
+        "base_resume_md": "Dev Node.js e React",
+        "github_repos": [],
+        "unmatched_gaps": ["C#"],
+    }
+
+    # Caso 1: Currículo contém as equivalências (HTML5, PostgreSQL, RESTful APIs, IA Generativa), mas NÃO tem C#
+    cv_valid = """
+    # Candidato
+    ## Habilidades
+    | Categoria | Tecnologias |
+    | :--- | :--- |
+    | Web & Backend | HTML5, PostgreSQL, RESTful APIs, IA Generativa, Git |
+    """
+    is_valid, critical_issues, diag = _validate_resume_deterministic(cv_valid, state)
+    assert is_valid is True
+    assert "HTML" in diag["matched_keywords"]
+    assert "SQL" in diag["matched_keywords"]
+    assert "APIs REST" in diag["matched_keywords"]
+    assert "Inteligência Artificial Generativa" in diag["matched_keywords"]
+    assert "C#" in diag["missing_keywords"]
+
+    # Caso 2: Currículo inventa C# no texto violando a trava factual
+    cv_invented = """
+    # Candidato
+    ## Habilidades
+    | Categoria | Tecnologias |
+    | :--- | :--- |
+    | Web & Backend | HTML5, PostgreSQL, C# |
+    """
+    is_valid_inv, critical_issues_inv, _ = _validate_resume_deterministic(cv_invented, state)
+    assert is_valid_inv is False
+    assert any("Violação de trava factual" in issue for issue in critical_issues_inv)
+
+
+def test_validate_resume_deterministic_gap_never_matched_and_score_capped():
+    from src.agents.nodes import _validate_resume_deterministic
+
+    state = {
+        "job_technologies": ["Java", "Git", "Estrutura de Dados", "Algoritmos"],
+        "job_keywords": ["código limpo", "revisão de código"],
+        "base_resume_md": "Desenvolvedor Full Stack Node.js, React e Git",
+        "github_repos": [],
+        "unmatched_gaps": ["Java"],
+        "verified_technologies": ["Git", "Estrutura de Dados", "Algoritmos"],
+    }
+
+    # Mesmo que o texto mencione 'Java' (ex.: no resumo ou aspiração), Java NUNCA pode ser matched_keyword
+    cv_with_aspirational_mention = """
+    # Thiago Araújo
+    ### Desenvolvedor Full Stack
+    ## RESUMO
+    Desenvolvedor Full Stack. Busco aprender Java rapidamente.
+    ## HABILIDADES TÉCNICAS
+    | Categoria | Tecnologias |
+    | :--- | :--- |
+    | Geral | Git, Estrutura de Dados, Algoritmos, código limpo, revisão de código |
+    """
+
+    is_valid, critical_issues, diag = _validate_resume_deterministic(cv_with_aspirational_mention, state)
+    # Java NÃO pode constar em matched_keywords
+    assert "Java" not in diag["matched_keywords"]
+    # Java DEVE constar obrigatoriamente em missing_keywords
+    assert "Java" in diag["missing_keywords"]
+    # O Score ATS JAMAIS pode ser 100% quando há pendência técnica na stack da vaga
+    assert diag["ats_score"] < 80

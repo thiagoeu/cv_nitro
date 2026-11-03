@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
-from src.core import config, quota_manager
+from src.core import config, quota_manager, competency_matcher as competency_matcher_core
 import requests
 import base64
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -448,6 +448,40 @@ def relevance_ranker(state: dict) -> dict:
         }]
     }
 
+def competency_matcher(state: dict) -> dict:
+    """
+    Agente / Nó de Mapeamento Semântico de Competências:
+    Compara os requisitos extraídos da vaga contra o currículo base e o portfólio do GitHub
+    usando equivalências semânticas e canônicas legítimas de mercado (ex.: HTML5 -> HTML, PostgreSQL -> SQL).
+    Separa em:
+    - verified_technologies: tecnologias que o candidato comprovou e podem figurar no currículo.
+    - unmatched_gaps: pendências técnicas reais que o candidato NÃO possui (proibidas no histórico).
+    """
+    job_technologies = state.get("job_technologies", [])
+    base_resume = state.get("base_resume_md", "")
+    repos = state.get("github_repos", []) or state.get("raw_github_repos", []) or []
+
+    res = competency_matcher_core.classify_competencies(job_technologies, base_resume, repos)
+    verified = res["verified_technologies"]
+    gaps = res["unmatched_gaps"]
+
+    detail = (
+        f"Mapeadas {len(verified)} tecnologias comprovadas/equivalentes e "
+        f"{len(gaps)} pendências técnicas reais ({res['match_rate']}% de aderência inicial comprovada)."
+    )
+
+    return {
+        "verified_technologies": verified,
+        "unmatched_gaps": gaps,
+        "agent_trace": [{
+            "agent": "competency_matcher",
+            "step": "Mapeamento Semântico de Competências",
+            "detail": detail,
+            "status": "success",
+        }],
+    }
+
+
 def _portfolio_context(state: dict, readme_chars: int = 1200) -> str:
     context = ""
     readmes = state.get("github_readmes", {})
@@ -471,6 +505,23 @@ def resume_generator(state: dict) -> dict:
     feedback = state.get("reviewer_feedback", "")
     L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
 
+    feedback_text = f"\n\nATENÇÃO! O revisor rejeitou a versão anterior pelo seguinte motivo: {feedback}. Ajuste o currículo rigorosamente conforme esse feedback." if feedback else ""
+    portfolio = _portfolio_context(state, 1200) or "Nenhum repositório do GitHub fornecido."
+
+    verified_techs = state.get("verified_technologies")
+    gaps = state.get("unmatched_gaps")
+    if verified_techs is None or gaps is None:
+        classified = competency_matcher_core.classify_competencies(
+            state.get("job_technologies", []),
+            base_resume,
+            state.get("github_repos", []) or state.get("raw_github_repos", []) or []
+        )
+        verified_techs = classified["verified_technologies"]
+        gaps = classified["unmatched_gaps"]
+
+    verified_str = ", ".join(verified_techs) if verified_techs else "Utilize apenas as tecnologias do currículo base."
+    gaps_str = ", ".join(gaps) if gaps else "Nenhuma pendência identificada."
+
     # 1. Prefixo estático imutável: Regras ATS e Layouts (máximo reuso de Prompt Caching)
     system_prompt = f"""Você é um especialista em recrutamento executivo de tecnologia e sistemas ATS.
 Sua missão é reescrever o currículo base em Markdown de ALTA FIDELIDADE e PADRONIZAÇÃO EXECUTIVA, escrito inteiramente em {L['name']}.
@@ -478,11 +529,11 @@ Sua missão é reescrever o currículo base em Markdown de ALTA FIDELIDADE e PAD
 ESTRUTURA OBRIGATÓRIA (substitua cada <marcador> pelo conteúdo real; nunca escreva os sinais < >, colchetes ou o nome do marcador):
 
 # <Nome completo do candidato>
-### <Cargo alvo alinhado à vaga>
+### <Cargo profissional REAL do candidato baseado no currículo base (ex.: 'Desenvolvedor Full Stack' ou 'Engenheiro de Software'). ATENÇÃO: NUNCA assuma um título de cargo de tecnologias que você NÃO domina (ex.: se a vaga pede Java mas o candidato não possui Java em seu histórico, NUNCA coloque 'Desenvolvedor Java'; mantenha a identidade profissional real como 'Desenvolvedor Full Stack')>
 <Cidade, UF / País> | <Email> | <LinkedIn> | <GitHub>
 
 ## {L['summary']}
-<Um único parágrafo denso destacando senioridade, stack principal alinhada à vaga, escala dos projetos e diferenciais técnicos reais>
+<Um único parágrafo denso destacando senioridade, stack principal comprovada do candidato, escala dos projetos e diferenciais técnicos reais. Seja 100% honesto: NUNCA declare domínio, experiência ou proficiência em tecnologias que constem na lista de pendências técnicas>
 
 ## {L['skills']}
 {L['table_header']}
@@ -504,7 +555,7 @@ ESTRUTURA OBRIGATÓRIA (substitua cada <marcador> pelo conteúdo real; nunca esc
 - **<Pilar técnico>:** <explicação técnica da implementação em 1ª pessoa, ex: 'Desenvolvi...', 'Implementei...', 'Estruturei...', 'Projetei...'>
 - **{L['repo']}:** <URL do repositório no GitHub>
 
-(Enriqueça com os repositórios do GitHub fornecidos.)
+(Na seção de projetos, use EXCLUSIVAMENTE os projetos fornecidos no bloco 'PORTFÓLIO GITHUB' com seus nomes e URLs exatas. NUNCA cite projetos do currículo base que não constem no PORTFÓLIO GITHUB.)
 
 ## {L['education']}
 ### <Grau e curso>
@@ -520,22 +571,30 @@ REGRAS CRÍTICAS:
 1. IDIOMA: todo o currículo DEVE estar em {L['name']}. Se o currículo base estiver em outro idioma, TRADUZA integralmente: resumo, cargos, bullets, tópicos, cabeçalho e categorias da tabela, formação, certificações, nomes dos idiomas e níveis. Mantenha como no original apenas nomes de pessoas, empresas, instituições, projetos e tecnologias.
 2. BULLETS: sempre `- **Tópico:** ação`. Não use "●", "•" nem colchetes.
 3. TABELA: a seção de habilidades é SEMPRE a tabela Markdown de 2 colunas acima, com a linha separadora `| :--- | :--- |`.
-4. ATS: integre naturalmente as palavras-chave da vaga nas experiências e habilidades.
-5. NUNCA ALUCINE: não invente empregos, empresas, tecnologias ou repositórios que não estejam no currículo base ou no portfólio.
+4. ATS & EQUIVALÊNCIAS: integre naturalmente as palavras-chave comprovadas da vaga nas experiências e habilidades.
+5. TRAVA FACTUAL ANTI-ALUCINAÇÃO (WHITELIST E TOTAL HONESTIDADE):
+   - CARGO E IDENTIDADE: Mantenha sempre o cargo profissional REAL do candidato baseado no histórico comprovado. Jamais invente ou intitule o candidato com uma tecnologia que ele não possui (ex.: se a vaga pede Java mas o candidato é Full Stack em Node/React/Go, declare 'Desenvolvedor Full Stack', NUNCA 'Desenvolvedor Java').
+   - TECNOLOGIAS COMPROVADAS PERMITIDAS: {verified_str}.
+   - PENDÊNCIAS TÉCNICAS DA VAGA (PROIBIDAS NO CURRÍCULO): É TERMINANTEMENTE PROIBIDO inventar ou atribuir ao candidato as seguintes tecnologias: {gaps_str}. NUNCA as coloque no título, no resumo, na tabela de habilidades nem nas experiências como se o candidato as dominasse. Elas são lacunas e serão abordadas de forma transparente na carta de apresentação e roteiro de entrevista.
+   - SOURCING ESTRITO DE PROJETOS: Na seção de projetos em destaque, cite apenas repositórios do PORTFÓLIO GITHUB fornecido.
 6. VOZ NARRATIVA E AUTORIA EM 1ª PESSOA: Todos os bullets de experiência e projetos DEVEM ser redigidos em PRIMEIRA PESSOA ('eu fiz'), transmitindo protagonismo, proatividade e sentimento de dono (ownership).
    - Cargo/experiência atual (presente): conjugue na 1ª pessoa do presente (ex.: "Atuo no desenvolvimento...", "Construo e mantenho APIs...", "Desenvolvo testes...", "Lidero...").
    - Cargos passados e projetos (passado): conjugue na 1ª pessoa do pretérito perfeito (ex.: "Desenvolvi...", "Implementei...", "Estruturei...", "Configurei...", "Solucionei...").
    - NUNCA use verbos na 3ª pessoa (ex.: "Atua", "Constrói", "Desenvolveu", "Implementou"), pois soa impessoal e retira a autoria do candidato.
 7. Retorne APENAS o Markdown do currículo, sem comentários e sem cercas de código (```)."""
 
-    feedback_text = f"\n\nATENÇÃO! O revisor rejeitou a versão anterior pelo seguinte motivo: {feedback}. Ajuste o currículo rigorosamente conforme esse feedback." if feedback else ""
-    portfolio = _portfolio_context(state, 1200) or "Nenhum repositório do GitHub fornecido."
-
     # Prefixo estável primeiro (regras -> currículo base) para aproveitar o cache implícito de prompt
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"--- CURRÍCULO BASE DO CANDIDATO ---\n{base_resume}"),
-        HumanMessage(content=f"--- VAGA ALVO ---\n{job_desc}\n\n--- PORTFÓLIO GITHUB ---\n{portfolio}{feedback_text}")
+        HumanMessage(
+            content=(
+                f"--- VAGA ALVO ---\n{job_desc}\n\n"
+                f"--- TECNOLOGIAS COMPROVADAS (PERMITIDAS NO CURRÍCULO) ---\n{verified_str}\n\n"
+                f"--- PENDÊNCIAS TÉCNICAS DA VAGA (NÃO INVENTAR NO CURRÍCULO) ---\n{gaps_str}\n\n"
+                f"--- PORTFÓLIO GITHUB (USAR APENAS ESSES EM PROJETOS) ---\n{portfolio}{feedback_text}"
+            )
+        )
     ]
     response = _llm(temperature=0.2, thinking_level=None).invoke(messages)
     quota_manager.record_llm_usage(
@@ -554,13 +613,8 @@ REGRAS CRÍTICAS:
     }
 
 def _term_in_text(term: str, text_lower: str) -> bool:
-    """Verifica presença de termo técnico respeitando limites de palavras sem falso positivo."""
-    term_clean = term.lower().strip()
-    if not term_clean:
-        return False
-    # Para termos com caracteres especiais (+, #, ., -), ex: c++, c#, .net, node.js
-    pattern = rf"(?<![a-zA-Z0-9]){re.escape(term_clean)}(?![a-zA-Z0-9])"
-    return bool(re.search(pattern, text_lower))
+    """Verifica presença de termo técnico respeitando equivalências canônicas e limites de palavras."""
+    return competency_matcher_core.matches_technology(term, text_lower)
 
 PLACEHOLDER_RE = re.compile(r"<[A-Za-zÀ-ÿ0-9\s/—–_.,:-]+>")
 EMAIL_IN_BRACKETS_RE = re.compile(r"^<[^@\s]+@[^@\s]+\.[^@\s]+>$")
@@ -577,6 +631,8 @@ def _critical_patch_section(generated_md: str, critical_issues: list, labels: di
     """
     if any("repositório citado" in issue for issue in critical_issues):
         return labels["projects"]
+    if any("trava factual" in issue.lower() for issue in critical_issues):
+        return labels["skills"]
     unfilled = _unfilled_placeholders(generated_md)
     if unfilled:
         headers = re.findall(r"(?m)^##\s+(.+?)\s*$", generated_md[:unfilled[0].start()])
@@ -594,6 +650,7 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
     critical_issues = []
     warnings = []
     generated_md = generated_md or ""
+    gen_lower = generated_md.lower()
 
     # 1. Placeholders residuais: detecta padrões como <Nome>, <Cargo alvo...>, <Cidade, UF>
     # Excetua endereços de e-mail no formato <usuario@dominio.com>
@@ -620,23 +677,49 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
         if valid_repo_urls and url_clean not in valid_repo_urls:
             critical_issues.append(f"O repositório citado '{raw_url}' não consta no portfólio retornado pela API do GitHub")
 
+    # Resolução de contexto do candidato e competências classificadas
+    job_technologies = [t.strip() for t in (state.get("job_technologies") or []) if t and t.strip()]
+    job_keywords = [k.strip() for k in (state.get("job_keywords") or []) if k and k.strip()]
+    base_cv = state.get("base_resume_md", "")
+    repos = state.get("github_repos", []) or state.get("raw_github_repos", []) or []
+    candidate_bg = base_cv + " " + " ".join((r.get("name") or "") + " " + (r.get("description") or "") for r in repos)
+
+    unmatched_gaps = state.get("unmatched_gaps") or []
+    verified_techs = state.get("verified_technologies") or []
+    unmatched_gaps_lower = {g.lower() for g in unmatched_gaps}
+    verified_techs_lower = {v.lower() for v in verified_techs}
+
+    # 2.1 Trava factual: verificar se alguma pendência técnica não comprovada foi inserida
+    if unmatched_gaps:
+        for gap in unmatched_gaps:
+            if _term_in_text(gap, gen_lower) and not competency_matcher_core.matches_technology(gap, candidate_bg):
+                critical_issues.append(f"Violação de trava factual: O termo de pendência '{gap}' foi atribuído indevidamente ao histórico.")
+
     # 3. Tabela Markdown de habilidades com 2 colunas
     has_table = bool(re.search(r"\|\s*:?---+\s*\|\s*:?---+\s*\|", generated_md))
     if not has_table:
         warnings.append("A seção de habilidades deve conter uma tabela Markdown de 2 colunas com o separador '| :--- | :--- |'")
 
     # 4. Mapeamento de termos ATS e pontuação auditável
-    job_technologies = [t.strip() for t in (state.get("job_technologies") or []) if t and t.strip()]
-    job_keywords = [k.strip() for k in (state.get("job_keywords") or []) if k and k.strip()]
-    gen_lower = generated_md.lower()
+    # A tecnologia só é considerada matched se NÃO for uma pendência técnica (unmatched_gaps) E constar no currículo gerado
+    matched_techs = []
+    for t in job_technologies:
+        if t.lower() in unmatched_gaps_lower:
+            continue
+        if _term_in_text(t, gen_lower):
+            matched_techs.append(t)
 
-    matched_techs = [t for t in job_technologies if _term_in_text(t, gen_lower)]
-    matched_kws = [k for k in job_keywords if _term_in_text(k, gen_lower)]
+    matched_kws = []
+    for k in job_keywords:
+        if k.lower() in unmatched_gaps_lower:
+            continue
+        if _term_in_text(k, gen_lower):
+            matched_kws.append(k)
 
     seen = set()
     unique_matched = []
     for m in (matched_techs + matched_kws):
-        if m.lower() not in seen:
+        if m.lower() not in seen and m.lower() not in unmatched_gaps_lower:
             seen.add(m.lower())
             unique_matched.append(m)
 
@@ -645,8 +728,15 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
     matched_kws_lower = {k.lower() for k in matched_kws}
     missing_techs = [t for t in job_technologies if t.lower() not in matched_techs_lower]
     missing_kws = [k for k in job_keywords if k.lower() not in matched_kws_lower]
+
     missing_keywords = []
     missing_seen = set()
+    # Prioritariamente inclui todas as pendências técnicas reais
+    for gap in (unmatched_gaps or []):
+        if gap.lower() not in missing_seen:
+            missing_seen.add(gap.lower())
+            missing_keywords.append(gap)
+
     for m in (missing_techs + missing_kws):
         if m.lower() not in missing_seen and m.lower() not in seen:
             missing_seen.add(m.lower())
@@ -659,6 +749,12 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
 
     base_score = (0.50 * tech_rate) + (0.25 * keyword_rate) + (0.25 * structural_rate)
     ats_score = int(min(100, max(0, round(base_score * 100))))
+
+    # Trava de honestidade ATS: se há pendências técnicas fundamentais na vaga,
+    # o score ATS não pode atingir notas de excelência/100%. É limitado proporcionalmente.
+    if job_technologies and len(missing_techs) > 0 and len(unmatched_gaps) > 0:
+        max_allowed_score = int(round(35 + (50 * tech_rate)))
+        ats_score = min(ats_score, max_allowed_score)
 
     applied_changes = [
         f"Alinhamento comprovado de {len(matched_techs)} tecnologias da vaga no histórico",
@@ -946,7 +1042,7 @@ def quality_reviewer(state: dict) -> dict:
             "e os bullets seguem o formato `- **Tópico:** ação` (sem colchetes)?\n"
             "4. **Voz Narrativa em 1ª Pessoa:** os bullets de experiência e projetos usam verbos em 1ª pessoa ('Atuo...', 'Desenvolvi...', 'Implementei...') indicando protagonismo e autoria, e NÃO em 3ª pessoa impessoal ('Atua', 'Desenvolveu')?\n\n"
             "Avalie a qualidade ATS:\n"
-            "- Atribua um ats_score de 0 a 100 baseado na fidelidade, clareza e densidade das keywords.\n"
+            "- Atribua um ats_score de 0 a 100 baseado na fidelidade, clareza e densidade das keywords comprovadas (nunca atribua notas altas se o candidato tiver lacunas técnicas não comprovadas na vaga).\n"
             "- Liste em applied_changes de 3 a 5 adequações realizadas em relação ao currículo base.\n"
             "- Forneça em interview_tips de 2 a 3 orientações para entrevista técnica sobre como defender os requisitos da vaga e destacar os projetos reais.\n"
             "- Classifique severity em 'approved' (aprovado), 'minor' (problema pontual em 1 seção específica) ou 'major' (alucinação grave/reescrita total).\n"
@@ -969,6 +1065,11 @@ def quality_reviewer(state: dict) -> dict:
 
         llm_score = getattr(result, "ats_score", diag["ats_score"])
         final_ats_score = int(diag["ats_score"] * 0.6 + llm_score * 0.4)
+        if state.get("job_technologies") and state.get("unmatched_gaps"):
+            tech_cov = diag.get("tech_coverage", 100) / 100.0
+            if tech_cov < 1.0:
+                max_allowed = int(round(35 + (50 * tech_cov)))
+                final_ats_score = min(final_ats_score, max_allowed)
         applied_changes = getattr(result, "applied_changes", []) or diag["applied_changes"]
         interview_tips = getattr(result, "interview_tips", []) or diag["interview_tips"]
 
