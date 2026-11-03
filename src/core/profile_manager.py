@@ -56,7 +56,8 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
 
     # 2. Fallback no armazenamento local
     _ensure_profiles_dir()
-    local_path = os.path.join(get_profiles_dir(), f"{user_id}.json")
+    profiles_dir = get_profiles_dir()
+    local_path = os.path.join(profiles_dir, f"{user_id}.json")
     if os.path.exists(local_path):
         try:
             with open(local_path, "r", encoding="utf-8") as f:
@@ -73,6 +74,28 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
                 }
         except Exception as e:
             print(f"Aviso ao ler perfil local {local_path}: {e}")
+
+    # Fallback de conveniência para sessões locais (evita formulário em branco se já houver perfil configurado)
+    if user_id.startswith("local-") or user_id in ("guest_local", "anonymous"):
+        if os.path.exists(profiles_dir):
+            for fname in sorted(os.listdir(profiles_dir)):
+                if fname.endswith(".json") and fname != "quota_usage.json":
+                    try:
+                        with open(os.path.join(profiles_dir, fname), "r", encoding="utf-8") as pf:
+                            pdata = json.load(pf)
+                            if pdata.get("github_username") or pdata.get("base_resume"):
+                                return {
+                                    "user_id": user_id,
+                                    "email": email or pdata.get("email", ""),
+                                    "full_name": pdata.get("full_name", ""),
+                                    "base_resume": pdata.get("base_resume", ""),
+                                    "github_username": pdata.get("github_username", ""),
+                                    "cached_repos": pdata.get("cached_repos", []),
+                                    "skills": pdata.get("skills", []),
+                                    "updated_at": pdata.get("updated_at", "")
+                                }
+                    except Exception:
+                        pass
 
     return get_default_profile(user_id, email)
 
