@@ -1,16 +1,9 @@
 from langgraph.graph import StateGraph, START, END
 from src.agents.state import GraphState
-from src.agents.nodes import (
-    job_analyzer,
-    github_fetcher,
-    relevance_ranker,
-    competency_matcher,
-    resume_generator,
-    section_patcher,
-    quality_reviewer,
-    cover_letter_generator,
-    MAX_REVIEW_ATTEMPTS
-)
+from src.agents.nodes.analysis import job_analyzer, competency_matcher
+from src.agents.nodes.github import github_fetcher, relevance_ranker
+from src.agents.nodes.writer import resume_generator, section_patcher, cover_letter_generator
+from src.agents.nodes.reviewer import quality_reviewer, MAX_REVIEW_ATTEMPTS
 
 def route_after_review(state: dict) -> str:
     """

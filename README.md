@@ -7,7 +7,7 @@
 [![Google Gemini](https://img.shields.io/badge/LLM-Google%20Gemini%203.x%20%2F%20Flash-8E75C2.svg)](https://ai.google.dev/)
 [![Groq](https://img.shields.io/badge/Fallback-Groq%20%28Llama%20%2F%20GPT--OSS%29-F55036.svg)](https://groq.com/)
 [![Supabase](https://img.shields.io/badge/Banco%20de%20Dados-Supabase%20%28PostgreSQL%29-3ECF8E.svg)](https://supabase.com/)
-[![Testes](https://img.shields.io/badge/Testes-125%20Passando%20%28Pytest%29-brightgreen.svg)](https://docs.pytest.org/)
+[![Testes](https://img.shields.io/badge/Testes-Pytest-brightgreen.svg)](https://docs.pytest.org/)
 [![Licença](https://img.shields.io/badge/Licen%C3%A7a-MIT%20%2F%20Acad%C3%AAmica-lightgrey.svg)](LICENSE)
 
 > 🚀 **Aplicação em Produção (Deploy Ativo):** [https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/](https://cvnitro-xzvgi43qkmsbovbt87h9bz.streamlit.app/)
@@ -27,7 +27,7 @@ Diferente de geradores convencionais baseados em prompts únicos (suscetíveis a
   - [Por que Sistemas Multi-Agentes (SMA) em vez de Prompt Único?](#por-que-sistemas-multi-agentes-sma-em-vez-de-prompt-único)
   - [Topologia do Grafo Cognitivo (LangGraph)](#topologia-do-grafo-cognitivo-langgraph)
   - [Papéis, Importância e Escolhas Técnicas de Cada Agente](#papéis-importância-e-escolhas-técnicas-de-cada-agente)
-  - [Arestas Condicionais e Circuit Breaker](#arestas-condicionais-e-circuit-breaker)
+  - [Arestas Condicionais, Snapshot & Rollback e Circuit Breaker](#arestas-condicionais-snapshot--rollback-e-circuit-breaker)
   - [Resiliência Multi-Provedor (Gemini + Groq)](#resiliência-multi-provedor-gemini--groq)
 - [🗺️ Mapeamento Completo de Funcionalidades do Sistema](#️-mapeamento-completo-de-funcionalidades-do-sistema)
   - [1. Autenticação Segura & Sessão Persistente](#1-autenticação-segura--sessão-persistente)
@@ -42,7 +42,7 @@ Diferente de geradores convencionais baseados em prompts únicos (suscetíveis a
 - [🛠️ Tecnologias Utilizadas](#️-tecnologias-utilizadas)
 - [📁 Estrutura do Repositório](#-estrutura-do-repositório)
 - [🚀 Como Executar Localmente](#-como-executar-localmente)
-- [🧪 Executando os Testes Automatizados (125 Testes)](#-executando-os-testes-automatizados-125-testes)
+- [🧪 Executando os Testes Automatizados](#-executando-os-testes-automatizados)
 - [📄 Licença](#-licença)
 
 ---
@@ -80,7 +80,7 @@ O GitMatch implementa uma **linha de produção modular** inspirada nos princíp
 
 ### Topologia do Grafo Cognitivo (LangGraph)
 
-O fluxo é orquestrado em torno de um grafo direcionado cíclico com estado tipado compartilhado ([GraphState](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/state.py)):
+O fluxo é orquestrado em torno de um grafo direcionado cíclico com estado tipado compartilhado ([GraphState](src/agents/state.py)):
 
 ```mermaid
 flowchart TD
@@ -88,15 +88,16 @@ flowchart TD
     Start --> GF[2a. GitHub Fetcher]
     JA -->|Sintese da Vaga, Termos ATS & Idioma| RR[2b. Relevance Ranker]
     GF -->|Repositórios públicos ou cache do Perfil| RR
-    RR -->|Top 3 Repositórios Autorais & READMEs Limpos| RG[3. Resume Generator]
-    RG -->|Currículo Formatado em Markdown ATS| QR[4. Quality Reviewer & Diagnóstico ATS]
+    RR -->|Top 3 Repositórios Autorais & READMEs Limpos| CM[3. Competency Matcher]
+    CM -->|Tecnologias Comprovadas & Lacunas| RG[4. Resume Generator]
+    RG -->|Currículo Formatado em Markdown ATS| QR[5. Quality Reviewer & Diagnóstico ATS]
     
     QR --> Route{route_after_review}
     Route -- "Falha pontual em 1 seção & tentativas < 2" --> SP[Section Patcher]
     SP --> QR
     Route -- "Falha grave & tentativas < 2" --> RG
     Route -- "Aprovado / Limite atingido\n(sem Cover Letter)" --> EndFlow([Fim do Fluxo])
-    Route -- "Aprovado / Limite atingido\n(com Cover Letter)" --> CL[5. Cover Letter Generator]
+    Route -- "Aprovado / Limite atingido\n(com Cover Letter)" --> CL[6. Cover Letter Generator]
     CL --> EndFlow
     
     EndFlow --> Storage[(Persistência: Supabase Nuvem / Local)]
@@ -107,16 +108,18 @@ flowchart TD
 ### Papéis, Importância e Escolhas Técnicas de Cada Agente
 
 #### 🎯 1. Job Analyzer (`job_analyzer`)
+* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py)
 * **Papel:** Analista especialista em triagem e extração de requisitos de vagas de tecnologia.
 * **Importância:** Funciona como o alicerce do fluxo. Se o idioma ou os termos forem mal identificados, todo o restante da cadeia gerará resultados distorcidos.
 * **Principais Escolhas Técnicas & Motivações:**
-  - **Saída Estruturada via Pydantic ([JobAnalysis](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L66-L74)):** Garante tipagem estrita de `keywords`, `technologies`, `language` e `summary`.
-  - **`job_summary` Enxuto (~150 palavras):** A vaga bruta contém textos irrelevantes (benefícios, cultura da empresa, declarações de diversidade, cabeçalhos de sites). O analisador resume os requisitos e substitui a vaga original por `_job_context()`, **economizando centenas de tokens em cada nó seguinte**.
+  - **Saída Estruturada via Pydantic ([JobAnalysis](src/agents/nodes/analysis.py)):** Garante tipagem estrita de `keywords`, `technologies`, `language` e `summary`.
+  - **`job_summary` Enxuto (~150 palavras):** A vaga bruta contém textos irrelevantes (benefícios, cultura da empresa, declarações de diversidade, cabeçalhos de sites). O analisador resume os requisitos e substitui a vaga original por `job_context()`, **economizando centenas de tokens em cada nó seguinte**.
   - **Detecção Robusta de Idioma:** Avalia o corpo dos requisitos ignorando textos fixos da interface de portais de emprego (ex.: *"Candidatar-se à vaga"*).
 
 ---
 
 #### 🐙 2. GitHub Fetcher + Relevance Ranker (`github_fetcher`, `relevance_ranker`)
+* **Arquivo:** [src/agents/nodes/github.py](src/agents/nodes/github.py)
 * **Papel:** Investigador de portfólio e curador de evidências técnicas reais do candidato.
 * **Importância:** Conecta o currículo a projetos reais, impedindo que o candidato liste apenas palavras-chave soltas sem embasamento prático.
 * **Principais Escolhas Técnicas & Motivações:**
@@ -124,32 +127,49 @@ flowchart TD
   - **Fan-out Concorrente:** O `github_fetcher` lista os repositórios (até 100, uma requisição) em paralelo com o `job_analyzer`; o `relevance_ranker` junta os dois resultados.
   - **Cache do Perfil:** Se o usuário do GitHub da otimização for o mesmo salvo no Perfil, a lista em cache é reaproveitada e a API de listagem nem é chamada.
   - **Filtragem Anti-Fork:** Repositórios que são forks de outros criadores são penalizados ou descartados, priorizando trabalhos autorais.
-  - **Algoritmo de Relevância Ponderada ([_score_repository](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L112-L150)):**
+  - **Algoritmo de Relevância Ponderada ([_score_repository](src/agents/nodes/github.py)):**
     - `+4.0` se a linguagem principal coincidir com a stack da vaga;
     - `+2.5` por tópico/tag correspondente;
     - `+1.5` por ocorrência de tecnologias na descrição (usando regex com limites de palavra `\b` para evitar falsos positivos como `"c"` em `"react"` ou `"go"` em `"google"`);
     - Bônus incremental por estrelas (*stargazers*).
-  - **Higienização de README ([_clean_readme](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L152-L189)):** Remove badges markdown, tags HTML, seções triviais de licença e comandos de instalação, preservando apenas o extrato técnico da arquitetura (limitado a 1.200 caracteres).
+  - **Higienização de README ([_clean_readme](src/agents/nodes/github.py)):** Remove badges markdown, tags HTML, seções triviais de licença e comandos de instalação, preservando apenas o extrato técnico da arquitetura (limitado a 1.200 caracteres).
   - **Validação de Segurança:** Regex de segurança sobre o nome de usuário do GitHub para proteção contra injeções.
 
 ---
 
-#### 📄 3. Resume Generator (`resume_generator`)
+#### 🧭 3. Competency Matcher (`competency_matcher`)
+* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py) (regras em [src/core/competency_matcher.py](src/core/competency_matcher.py))
+* **Papel:** Trava factual do pipeline: separa os requisitos da vaga em **tecnologias comprovadas** e **pendências técnicas** (lacunas) antes de qualquer redação.
+* **Importância:** É o que impede o currículo de afirmar uma tecnologia que o candidato não tem. As lacunas são proibidas no currículo, verificadas pelo revisor e entregues à carta, que só pode citá-las como interesse em aprender.
+* **Principais Escolhas Técnicas & Motivações:**
+  - **Determinístico (0 tokens de LLM):** O mesmo texto gera sempre o mesmo resultado, que pode ser testado e auditado. Usar um LLM para vigiar a alucinação de outro LLM seria circular.
+  - **Base de Evidências Única:** Currículo base + nome, descrição e linguagem dos repositórios selecionados + extratos dos READMEs. É a mesma evidência que o gerador recebe, então tudo o que o gerador pode usar conta como comprovado.
+  - **Equivalências Direcionais:**
+    - *Sinônimos* valem nos dois sentidos (`Postgres` = `PostgreSQL`, `golang` = `Go`, `RESTful` = `APIs REST`).
+    - *Famílias* valem só do específico para o genérico: `MySQL` comprova `SQL`, mas **não** comprova `PostgreSQL`; `pytest` comprova "testes automatizados", mas não `Jest`.
+    - Tecnologias fora do dicionário casam pela grafia literal: o dicionário não precisa listar tudo, só as variantes. Quando falta um mapeamento, o erro é conservador (vira lacuna, nunca alucinação).
+  - **Termos Curtos e Ambíguos:** `C`, `R`, `Go`, `REST`, `TS` e `ML` exigem a grafia técnica e não casam com `C#`, `C++`, `R&D`, `go-live` ou "the rest of".
+
+---
+
+#### 📄 4. Resume Generator (`resume_generator`)
+* **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py), junto com o `section_patcher` e o `cover_letter_generator`
 * **Papel:** Redator executivo especializado em formatação de alta fidelidade e triagem ATS.
 * **Importância:** Consolida o currículo base, a síntese da vaga e os projetos do GitHub em um documento elegante, legível por robôs e humanos.
 * **Principais Escolhas Técnicas & Motivações:**
-  - **Internacionalização Estrita com Dicionário Canônico ([LABELS](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L15-L40)):** Mapeia títulos de seção, categorias da tabela, níveis de idioma e cabeçalhos em `pt`, `en` e `es`. Se a vaga for em inglês, todo o currículo base é traduzido integralmente para inglês, mantendo no original apenas nomes próprios e tecnologias.
+  - **Internacionalização Estrita com Dicionário Canônico ([LABELS](src/agents/shared/sections.py)):** Mapeia títulos de seção, categorias da tabela, níveis de idioma e cabeçalhos em `pt`, `en` e `es`. Se a vaga for em inglês, todo o currículo base é traduzido integralmente para inglês, mantendo no original apenas nomes próprios e tecnologias.
   - **Estrutura ATS Padronizada:**
     - Seção de habilidades técnicas em **Tabela Markdown de 2 colunas** com separador `| :--- | :--- |` (o formato mais legível por parsers ATS).
     - Bullets de experiência no padrão `- **Tópico de Impacto:** verbo forte + escopo + resultado mensurável`.
     - Seção de projetos enriquecida com as URLs reais e arquiteturas do GitHub.
   - **Chamada Única com Portfólio no Prompt:** Os extratos higienizados dos READMEs dos 3 repositórios selecionados (~900 tokens) vão direto no prompt. Uma rodada de *tool-calling* reenviaria o prompt inteiro numa segunda chamada, custando mais tokens e latência do que os READMEs que evitaria.
-  - **Guarda Anti-Alucinação:** Proibição estrita de inventar cargos, empresas ou repositórios não fornecidos.
+  - **Guarda Anti-Alucinação:** Recebe do Competency Matcher a lista de tecnologias permitidas e a de lacunas proibidas; é proibido inventar cargos, empresas ou repositórios não fornecidos.
   - **Loop de Refinamento:** Recebe diretamente o parecer do revisor (`reviewer_feedback`) para correções pontuais quando vindo de uma reprovação.
 
 ---
 
-#### 🔍 4. Quality Reviewer & Diagnóstico ATS (`quality_reviewer`)
+#### 🔍 5. Quality Reviewer & Diagnóstico ATS (`quality_reviewer`)
+* **Arquivo:** [src/agents/nodes/reviewer.py](src/agents/nodes/reviewer.py)
 * **Papel:** Auditor rigoroso de conformidade estrutural, fidelidade factual e compatibilidade ATS.
 * **Importância:** Garante que o documento final não contenha erros graves antes de ser entregue ao usuário, atribuindo um score auditável.
 * **Principais Escolhas Técnicas & Motivações:**
@@ -163,7 +183,7 @@ flowchart TD
        - *Currículo vazio ou truncado:* texto vazio ou saída cortada pelo limite de tokens do modelo também contam como defeito crítico.
     2. **Tier 2 (Auditoria Semântica com LLM):**
        - Só é acionado se passar no Tier 1 e se o usuário tiver optado pelo modo estrito (`strict_review=True`).
-       - Recebe a vaga, as tecnologias comprovadas e as pendências técnicas, e avalia pureza do idioma e alucinações contextuais com saída Pydantic (`ReviewResult` em `src/agents/nodes.py`).
+       - Recebe a vaga, as tecnologias comprovadas e as pendências técnicas, e avalia pureza do idioma e alucinações contextuais com saída Pydantic (`ReviewResult`).
        - A seção que ele indica para refinamento é conferida com os títulos reais do currículo (aceita o nome em PT/EN/ES); se não existir, o currículo é regenerado.
        - Pondera a nota final: `60% determinístico + 40% LLM`.
   - **Modo Econômico de Execução:** Quando `strict_review=False`, o nó revisa usando unicamente o Tier 1, poupando a chamada do auditor LLM. Se houver um defeito crítico numa seção identificável, faz um único refinamento dessa seção.
@@ -172,7 +192,8 @@ flowchart TD
 
 ---
 
-#### ✉️ 5. Cover Letter Generator (`cover_letter_generator`)
+#### ✉️ 6. Cover Letter Generator (`cover_letter_generator`)
+* **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py)
 * **Papel:** Especialista sênior em redação de cartas de apresentação persuasivas para tecnologia.
 * **Importância:** Gera uma narrativa complementar de alto valor que conecta os projetos do candidato às dores reais da empresa contratante.
 * **Principais Escolhas Técnicas & Motivações:**
@@ -181,6 +202,7 @@ flowchart TD
     2. *Conexão Técnica:* Conexão entre as dores da vaga e os projetos reais do GitHub do candidato.
     3. *Fit Cultural & Proposta de Valor:* Alinhamento com a missão da empresa.
     4. *Fechamento Cordial:* Solicitação formal de entrevista técnica.
+  - **Ciente das Lacunas:** Recebe as tecnologias comprovadas e as pendências técnicas; uma lacuna só pode aparecer como disposição para aprender, nunca como experiência. Marcadores `<...>` não preenchidos na carta geram aviso na candidatura.
   - **Execução Opcional e Desacoplada:** O usuário pode desativar a carta no assistente (`generate_cover_letter=False`), economizando tempo e 40% dos tokens totais da pipeline.
   - **Isolamento de Falhas:** Caso a geração da carta falhe, o currículo principal permanece salvo e utilizável.
 
@@ -188,7 +210,7 @@ flowchart TD
 
 ### Arestas Condicionais, Snapshot & Rollback e Circuit Breaker
 
-A função de roteamento [route_after_review](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/graph.py#L14-L37) implementa uma máquina de decisão inteligente e tolerante a estagnação:
+A função de roteamento [route_after_review](src/agents/graph.py) implementa uma máquina de decisão inteligente e tolerante a estagnação:
 
 1. **Snapshot da Melhor Versão & Rollback Automático:**
    - Durante as rodadas de avaliação, o `quality_reviewer` preserva um snapshot da versão com maior pontuação ATS válida (`best_resume_md`, `best_ats_score`, `best_diagnostic`).
@@ -196,7 +218,8 @@ A função de roteamento [route_after_review](file:///c:/Users/Thiago/Desktop/Fa
 2. **Reprovação com Tentativas Restantes (`tentativas < 2`):**
    - Se a falha for pontual (`minor`) e houver seção alvo identificada (`patch_section`), aciona o `section_patcher` (Delta Patching cirúrgico).
    - Se a falha for estrutural ou grave (`major`), retorna ao `resume_generator` para reescrita completa.
-3. **Aprovação OU Limite de Tentativas Esgotado (`MAX_REVIEW_ATTEMPTS = 2`):**
+3. **Aprovação, Limite de Tentativas Esgotado (`MAX_REVIEW_ATTEMPTS = 2`) ou qualquer outro motivo de parada (`stop_reason`):**
+   - Se a versão final ainda tiver defeito crítico, ela é salva sem aprovação (`stop_reason = 'critical_issues_remaining'`) e com aviso.
    - Se o usuário desmarcou a carta (`generate_cover_letter=False`), o fluxo segue diretamente para `END`.
    - Se a carta estiver ativa, segue para `cover_letter_generator` e em seguida finaliza em `END`.
 4. **Mecanismo *Circuit Breaker*:** Garante que o grafo nunca entre em loops infinitos de regeneração, limitando estritamente a 2 rodadas.
@@ -208,8 +231,8 @@ A função de roteamento [route_after_review](file:///c:/Users/Thiago/Desktop/Fa
 
 Para mitigar os frequentes erros de limite de requisições por minuto (`HTTP 429`) e indisponibilidade temporária de servidores (`HTTP 503`):
 
-- **Encadeamento com Fallback Transparente ([_llm](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L42-L60)):**
-  - **Nível 1 (Principal):** Modelo Google Gemini configurado (`GEMINI_MODEL`, ex.: `gemini-2.0-flash-lite`).
+- **Encadeamento com Fallback Transparente ([chat_model](src/agents/shared/llm.py)):**
+  - **Nível 1 (Principal):** Modelo Google Gemini configurado (`GEMINI_MODEL`, padrão `gemini-3.8-flash`).
   - **Nível 2 (Fallback Google):** Modelo secundário (`GEMINI_FALLBACK_MODEL`, ex.: `gemini-3.6-flash`).
   - **Nível 3 (Fallback Groq):** Caso o `GROQ_API_KEY` esteja presente no `.env`, a requisição é automaticamente repassada para o provedor Groq (`ChatGroq`, com modelos de ultra-baixa latência como `openai/gpt-oss-120b`).
 - **Tempo Máximo por Chamada:** Cada tentativa tem limite de 120 s e 1 retry por modelo antes de passar ao próximo; se todos falharem, a otimização termina com erro visível e nada é salvo.
@@ -261,7 +284,7 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
 ### 7. Configurações & Diagnóstico do Sistema
 - Verificação do status de conexão com o banco de dados (Supabase Nuvem vs. Local).
 - Validação das chaves de API (`GEMINI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`).
-- **Monitor de Cota & Capacidade de Tokens (Hoje):** Acompanhamento visual com barras de progresso (`st.progress`) da porcentagem disponível de tokens e requisições diárias para Google Gemini e Groq Fallback, estimativa de quantas otimizações completas ainda cabem no dia antes de risco de erro HTTP 429, consulta ao vivo aos limites da API do GitHub (`/rate_limit`) e teste ativo das chaves de IA.
+- **Monitor de Cota & Capacidade de Tokens (Hoje):** Acompanhamento visual com barras de progresso (`st.progress`) da porcentagem disponível de tokens e requisições diárias para Google Gemini e Groq Fallback, estimativa de quantas otimizações completas ainda cabem no dia antes de risco de erro HTTP 429, consulta ao vivo aos limites da API do GitHub (`/rate_limit`) e teste ativo das chaves de IA. Cada chamada de modelo é contada uma única vez, no provedor que de fato respondeu (inclusive quando o Groq assume no lugar do Gemini), a partir dos metadados de uso do próprio LangChain.
 - Identificação dos modelos ativos e orientações para prevenção de limites de cota.
 
 ---
@@ -289,12 +312,13 @@ Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (
 
 | Estratégia | Onde Atua | Benefício Real |
 | :--- | :--- | :--- |
-| **Resumo da Vaga (`_job_context`)** | `job_analyzer` | Reduz o texto da vaga em até 85%, cortando ruídos de RH de todas as etapas seguintes. |
+| **Resumo da Vaga (`job_context`)** | `job_analyzer` | Reduz o texto da vaga em até 85%, cortando ruídos de RH de todas as etapas seguintes. |
 | **Curadoria Determinística de Repositórios** | `github_fetcher` + `relevance_ranker` | **0 tokens consumidos** para busca, filtro anti-fork, ranqueamento e higienização de READMEs. |
+| **Mapeamento de Competências** | `competency_matcher` | **0 tokens consumidos** para separar tecnologias comprovadas e lacunas. |
 | **Auditoria Determinística Tier 1** | `quality_reviewer` | **0 tokens consumidos** para checar links falsos, placeholders e calcular a cobertura ATS. |
 | **Modo Econômico de Revisão** | Toggle no Wizard | Pula a auditoria semântica do Tier 2, economizando ~35% dos tokens com resposta imediata. |
 | **Toggle de Cover Letter** | Toggle no Wizard | Evita uma chamada de IA pesada caso a vaga não exija carta de apresentação (-40% de tokens). |
-| **Reserva Automática Groq** | `_llm` fallback | Evita bloqueios por estouro de cota (429) do tier gratuito do Gemini. |
+| **Reserva Automática Groq** | `chat_model` (fallback) | Evita bloqueios por estouro de cota (429) do tier gratuito do Gemini. |
 
 ---
 
@@ -307,7 +331,7 @@ Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (
 - **Banco de Dados em Nuvem:** [Supabase](https://supabase.com/) (PostgreSQL & Supabase Auth)
 - **Extração de Documentos:** [PyPDF](https://pypdf.readthedocs.io/) e [python-docx](https://python-docx.readthedocs.io/)
 - **Integração Externa:** API REST v3 do GitHub via [Requests](https://requests.readthedocs.io/)
-- **Suíte de Testes:** [pytest](https://docs.pytest.org/) com 125 testes automatizados
+- **Suíte de Testes:** [pytest](https://docs.pytest.org/), sem rede (LLMs e Supabase mockados)
 - **Metodologia de Especificação:** [OpenSpec](https://github.com/openspec)
 
 ---
@@ -327,16 +351,25 @@ cv_nitro/
 ├── src/
 │   ├── agents/
 │   │   ├── graph.py            # Definição do StateGraph, nós, arestas e roteamento cíclico
-│   │   ├── nodes.py            # Implementação dos 5 nós agentes, prompts e cliente resiliente
-│   │   └── state.py            # Definição do estado global compartilhado (GraphState)
+│   │   ├── state.py            # Definição do estado global compartilhado (GraphState)
+│   │   ├── nodes/              # Agentes (nós do grafo), um arquivo por responsabilidade
+│   │   │   ├── analysis.py     # job_analyzer (requisitos da vaga) e competency_matcher (comprovadas x lacunas)
+│   │   │   ├── github.py       # github_fetcher, relevance_ranker e extratos dos READMEs
+│   │   │   ├── writer.py       # resume_generator, section_patcher e cover_letter_generator
+│   │   │   └── reviewer.py     # validação determinística (Tier 1) e quality_reviewer (Tier 2)
+│   │   └── shared/             # O que os agentes compartilham
+│   │       ├── llm.py          # Cliente Gemini com reservas, invocação com registro de cota, leitura da resposta
+│   │       └── sections.py     # Rótulos por idioma, seções do Markdown, marcadores e troca de seção
 │   │
 │   ├── core/
 │   │   ├── auth_manager.py     # Gerenciamento de autenticação e sessões (Supabase Auth / Guest)
+│   │   ├── competency_matcher.py # Regras de equivalência e classificação comprovadas x lacunas
 │   │   ├── config.py           # Carregamento e validação de configurações e variáveis de ambiente
 │   │   ├── db_migrator.py      # Migrações e sincronização de esquemas de banco de dados
 │   │   ├── document_parser.py  # Extrator de arquivos PDF, DOCX, TXT e Markdown
 │   │   ├── history_manager.py  # Persistência híbrida (Supabase Cloud + Fallback Local)
 │   │   ├── profile_manager.py  # Gerenciamento de perfis de candidatos persistentes
+│   │   ├── quota_manager.py    # Monitor de cota diária de tokens e requisições por provedor
 │   │   └── resume_formatter.py # Conversor de Markdown para visualização diagramada em folha A4
 │   │
 │   └── ui/
@@ -351,11 +384,13 @@ cv_nitro/
 │       ├── auth_views.py       # Telas de Login, Cadastro e Recuperação de Acesso
 │       └── landing_view.py     # Página institucional inicial para visitantes
 │
-├── tests/                      # Bateria com 125 testes automatizados
+├── tests/                      # Testes automatizados (pytest, sem rede: LLMs e Supabase mockados)
 │   ├── test_agents.py          # Testes de roteamento e branches do grafo
 │   ├── test_agent_quality_improvements.py # Testes de resiliência e validações determinísticas
+│   ├── test_app_views.py       # Testes das telas do app
 │   ├── test_auth_manager.py    # Testes unitários do fluxo de autenticação e sessões
 │   ├── test_auth_views.py      # Testes de renderização de telas de autenticação
+│   ├── test_competency_matcher.py # Testes de equivalências, termos ambíguos e lacunas
 │   ├── test_db_migrator.py     # Testes de integridade de esquema
 │   ├── test_document_parser.py # Testes de parsing de PDF, DOCX e TXT
 │   ├── test_end_to_end_flow.py # Teste E2E do pipeline completo
@@ -363,6 +398,7 @@ cv_nitro/
 │   ├── test_navbar.py          # Testes de alternância de rotas e menus
 │   ├── test_nodes.py           # Testes específicos de cada nó de agente
 │   ├── test_profile_manager.py # Testes de gerenciamento de perfis
+│   ├── test_quota_manager.py   # Testes de contagem de cota, concorrência e atribuição de provedor
 │   ├── test_resume_formatter.py# Testes da renderização de layout A4
 │   ├── test_state.py           # Validação da estrutura tipada do GraphState
 │   └── test_ui.py              # Testes unitários de componentes visuais
@@ -444,9 +480,9 @@ O painel será aberto automaticamente no seu navegador em: `http://localhost:850
 
 ---
 
-## 🧪 Executando os Testes Automatizados (125 Testes)
+## 🧪 Executando os Testes Automatizados
 
-A aplicação conta com uma bateria de **125 testes automatizados** cobrindo agentes, parsers, persistência, componentes visuais e autenticação:
+A bateria de testes automatizados cobre agentes, parsers, persistência, cota, componentes visuais e autenticação. Roda sem rede: LLMs e Supabase são mockados.
 
 ```bash
 pytest

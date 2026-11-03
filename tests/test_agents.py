@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from langgraph.graph import END
 from src.agents.state import GraphState
-from src.agents.nodes import quality_reviewer, ReviewResult
+from src.agents.nodes.reviewer import quality_reviewer, ReviewResult
 from src.agents.graph import route_after_review, build_graph
 
 def test_route_after_review_with_cover_letter_disabled():
@@ -102,7 +102,7 @@ def test_quality_reviewer_strict_mode_with_diagnostic():
 
     from langchain_core.runnables import RunnableLambda
 
-    with patch("src.agents.nodes._llm") as mock_llm_fn:
+    with patch("src.agents.shared.llm.chat_model") as mock_llm_fn:
         mock_instance = MagicMock()
         mock_instance.with_structured_output.return_value = RunnableLambda(lambda x: mock_review)
         mock_llm_fn.return_value = mock_instance
@@ -111,7 +111,7 @@ def test_quality_reviewer_strict_mode_with_diagnostic():
         assert result["reviewer_approved"] is True
         assert "diagnostic" in result
         # Nota final = 60% determinística + 40% do revisor LLM
-        from src.agents.nodes import _validate_resume_deterministic
+        from src.agents.nodes.reviewer import _validate_resume_deterministic
         _, _, det = _validate_resume_deterministic(state["generated_resume_md"], state)
         assert result["diagnostic"]["ats_score"] == int(det["ats_score"] * 0.6 + 92 * 0.4)
         assert len(result["diagnostic"]["applied_changes"]) == 3

@@ -77,13 +77,13 @@ def test_fetch_github_rate_limit():
 
 
 def test_nodes_record_quota_automatically():
-    from src.agents.nodes import resume_generator
+    from src.agents.nodes.writer import resume_generator
     fake_resp = MagicMock()
     fake_resp.text = "# Candidato\nCurrículo gerado"
     fake_resp.usage_metadata = {"total_tokens": 1200}
     fake_resp.response_metadata = {"model_name": "gemini-3.8-flash"}
 
-    with patch("src.agents.nodes._llm") as mock_llm:
+    with patch("src.agents.shared.llm.chat_model") as mock_llm:
         mock_llm.return_value.invoke.return_value = fake_resp
         resume_generator({"base_resume_md": "# Base", "job_description": "Vaga Python", "job_language": "pt"})
 
@@ -123,7 +123,7 @@ def test_structured_output_from_groq_fallback_is_attributed_to_groq():
     from langchain_core.language_models import GenericFakeChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.runnables import RunnableLambda
-    from src.agents.nodes import _invoke_tracked
+    from src.agents.shared.llm import invoke_tracked
 
     def gemini_quota_error(_):
         raise RuntimeError("429 RESOURCE_EXHAUSTED")
@@ -135,7 +135,7 @@ def test_structured_output_from_groq_fallback_is_attributed_to_groq():
     )]))
     # Modelo seguido de parser, como no with_structured_output: o resultado final é Pydantic, sem metadados
     chain = RunnableLambda(gemini_quota_error).with_fallbacks([groq]) | RunnableLambda(lambda m: DummyModel(title="Dev", items=[]))
-    result = _invoke_tracked(chain, "analise a vaga")
+    result = invoke_tracked(chain, "analise a vaga")
 
     assert isinstance(result, DummyModel)
     status = quota_manager.get_quota_status()

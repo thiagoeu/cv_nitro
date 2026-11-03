@@ -1,15 +1,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from src.agents.nodes import (
-    _score_repository,
-    _clean_readme,
-    _validate_resume_deterministic,
-    github_fetcher,
-    quality_reviewer,
-    section_patcher,
-    splice_markdown_section,
-    cover_letter_generator
-)
+from src.agents.nodes.github import _score_repository, _clean_readme, github_fetcher
+from src.agents.nodes.reviewer import _validate_resume_deterministic, quality_reviewer
+from src.agents.shared.sections import splice_markdown_section
+from src.agents.nodes.writer import section_patcher, cover_letter_generator
 from src.agents.graph import route_after_review, END
 from src.agents.state import GraphState
 
@@ -182,7 +176,7 @@ def test_quality_reviewer_tier1_early_rejection_without_llm():
         generate_cover_letter=True
     )
     # Se falhar no Tier 1, nem chama o LLM!
-    with patch("src.agents.nodes._llm") as mock_llm:
+    with patch("src.agents.shared.llm.chat_model") as mock_llm:
         result = quality_reviewer(state)
         mock_llm.assert_not_called()
         assert result["reviewer_approved"] is False
@@ -207,7 +201,7 @@ def test_quality_reviewer_economic_mode_zero_tokens():
         strict_review=False,
         generate_cover_letter=True
     )
-    with patch("src.agents.nodes._llm") as mock_llm:
+    with patch("src.agents.shared.llm.chat_model") as mock_llm:
         result = quality_reviewer(state)
         mock_llm.assert_not_called()
         assert result["reviewer_approved"] is True
@@ -307,7 +301,7 @@ def test_section_patcher_node():
     mock_response = MagicMock()
     mock_response.text = "## HABILIDADES TÉCNICAS\n| Categoria | Stack |\n| :--- | :--- |\n| Backend | Python, Docker |"
 
-    with patch("src.agents.nodes._llm") as mock_llm:
+    with patch("src.agents.shared.llm.chat_model") as mock_llm:
         mock_llm.return_value.invoke.return_value = mock_response
         res = section_patcher(state)
         assert "| Backend | Python, Docker |" in res["generated_resume_md"]
@@ -424,7 +418,7 @@ def test_economic_graph_runs_single_patch_without_reviewer_llm():
          patch("src.agents.graph.github_fetcher", return_value={"raw_github_repos": []}), \
          patch("src.agents.graph.relevance_ranker", return_value={"github_repos": [{"name": "real-repo", "url": "https://github.com/johndoe/real-repo"}], "github_readmes": {}}), \
          patch("src.agents.graph.resume_generator", return_value={"generated_resume_md": EN_RESUME_WITH_FAKE_REPO}) as mock_gen, \
-         patch("src.agents.nodes._llm", return_value=mock_llm) as llm_factory:
+         patch("src.agents.shared.llm.chat_model", return_value=mock_llm) as llm_factory:
         final = build_graph().invoke({
             "job_description": "Python", "base_resume_md": "Python developer", "github_username": "johndoe",
             "review_attempts": 0, "strict_review": False, "generate_cover_letter": False,
@@ -467,13 +461,13 @@ def _llm_review(state, review):
     """Roda o revisor rígido com um ReviewResult fixo e devolve (resultado, prompt enviado ao modelo)."""
     from langchain_core.runnables import RunnableLambda
     sent = []
-    with patch("src.agents.nodes._llm") as llm:
+    with patch("src.agents.shared.llm.chat_model") as llm:
         llm.return_value.with_structured_output.return_value = RunnableLambda(lambda p: sent.append(p.to_string()) or review)
         result = quality_reviewer(state)
     return result, sent[0]
 
 def test_reviewer_section_name_is_resolved_across_languages():
-    from src.agents.nodes import ReviewResult
+    from src.agents.nodes.reviewer import ReviewResult
     state = {"generated_resume_md": EN_VALID, "job_language": "en", "job_technologies": ["Python"], "job_keywords": [],
              "base_resume_md": "Python dev", "github_repos": [], "review_attempts": 0, "strict_review": True}
     pt_name = ReviewResult(approved=False, feedback="x", severity="minor", target_section="HABILIDADES TÉCNICAS")
@@ -486,7 +480,7 @@ def test_reviewer_section_name_is_resolved_across_languages():
     assert route_after_review(result) == "resume_generator"
 
 def test_reviewer_prompt_includes_job_and_gaps():
-    from src.agents.nodes import ReviewResult
+    from src.agents.nodes.reviewer import ReviewResult
     state = {"generated_resume_md": EN_VALID, "job_language": "en", "job_technologies": ["Python", "Kubernetes"],
              "job_keywords": [], "job_summary": "Backend role at ACME building payment APIs.",
              "verified_technologies": ["Python"], "unmatched_gaps": ["Kubernetes"],
@@ -504,7 +498,8 @@ def test_audit_scenario_gap_in_summary(strict, patch_fixes):
     """Reproduz a auditoria: lacuna no resumo nunca pode terminar aprovada nem sem aviso."""
     from langchain_core.runnables import RunnableLambda
     from src.agents.graph import build_graph
-    from src.agents.nodes import JobAnalysis, ReviewResult
+    from src.agents.nodes.analysis import JobAnalysis
+    from src.agents.nodes.reviewer import ReviewResult
     summary = "Desenvolvedor Python." if patch_fixes else "Especialista em Kubernetes."
 
     class FakeLLM:
@@ -517,7 +512,7 @@ def test_audit_scenario_gap_in_summary(strict, patch_fixes):
             text = f"## RESUMO PROFISSIONAL\n{summary}" if is_patch else KUBE_RESUME
             return MagicMock(text=text, usage_metadata={"total_tokens": 1}, response_metadata={})
 
-    with patch("src.agents.nodes._llm", return_value=FakeLLM()), patch("src.core.quota_manager.record_llm_usage"):
+    with patch("src.agents.shared.llm.chat_model", return_value=FakeLLM()), patch("src.core.quota_manager.record_llm_usage"):
         final = build_graph().invoke({"job_description": "vaga", "base_resume_md": "Desenvolvedor Python", "github_username": "",
                                       "review_attempts": 0, "strict_review": strict, "generate_cover_letter": False})
 

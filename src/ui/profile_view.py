@@ -49,7 +49,7 @@ def render_profile_view():
             if st.button("Atualizar projetos do GitHub", icon=":material/sync:", width="stretch", key="btn_sync_gh_cache", disabled=not github.strip()):
                 clear_transient_state()
                 with st.spinner(f"Buscando projetos públicos de @{github}..."):
-                    from src.agents.nodes import github_fetcher
+                    from src.agents.nodes.github import github_fetcher
                     gh_res = github_fetcher({"github_username": github.strip()})
                 if gh_res.get("errors"):
                     st.error(gh_res["errors"][0], icon=":material/error:")

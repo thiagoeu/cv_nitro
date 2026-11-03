@@ -1,12 +1,8 @@
 from unittest.mock import patch, MagicMock
-from src.agents.nodes import (
-    job_analyzer,
-    github_fetcher,
-    relevance_ranker,
-    resume_generator,
-    quality_reviewer,
-    cover_letter_generator
-)
+from src.agents.nodes.analysis import job_analyzer
+from src.agents.nodes.github import github_fetcher, relevance_ranker
+from src.agents.nodes.reviewer import quality_reviewer
+from src.agents.nodes.writer import resume_generator, cover_letter_generator
 from src.agents.graph import route_after_review
 from src.agents.state import GraphState
 import os
@@ -110,7 +106,7 @@ def test_quality_reviewer_api_failure_does_not_approve():
         review_attempts=0
     )
 
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_instance = MagicMock()
         mock_instance.with_structured_output.side_effect = Exception("Quota exceeded 429")
         mock_llm_cls.return_value = mock_instance
@@ -153,7 +149,7 @@ def test_cover_letter_generator_structure():
         review_attempts=1
     )
     
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_instance = MagicMock()
         # Formato real do Gemini 3.x: lista de blocos, às vezes com cerca ```markdown
         mock_instance.invoke.return_value = AIMessage(content=[
@@ -179,7 +175,7 @@ def _en_state(**overrides):
     return state
 
 def test_resume_generator_prompt_in_job_language():
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_llm_cls.return_value.invoke.return_value = AIMessage(content=[{"type": "text", "text": "# Fulano"}])
         result = resume_generator(_en_state())
 
@@ -195,7 +191,7 @@ def test_resume_generator_prompt_in_job_language():
 def test_resume_generator_uses_job_summary():
     state = _en_state(job_description="Join Our Team! Great Place to Work... React role", job_summary="Senior React engineer",
                       job_technologies=["React"], job_keywords=["ownership"])
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_llm_cls.return_value.invoke.return_value = AIMessage(content="# Fulano")
         resume_generator(state)
         # Mensagens: [0] SystemMessage (Regras ATS), [1] HumanMessage (Currículo Base), [2] HumanMessage (Vaga)
@@ -207,13 +203,13 @@ def test_resume_generator_uses_job_summary():
 
 def test_resume_generator_failure_propagates():
     # Antes o currículo base era devolvido e salvo como se fosse otimizado
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_llm_cls.return_value.invoke.side_effect = Exception("404 model not found")
         with pytest.raises(Exception, match="404"):
             resume_generator(_en_state())
 
 def test_cover_letter_failure_has_no_fake_letter():
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as mock_llm_cls:
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as mock_llm_cls:
         mock_llm_cls.return_value.invoke.side_effect = Exception("429 quota")
         result = cover_letter_generator(_en_state())
         assert result["generated_cover_letter_md"] == ""
@@ -222,7 +218,7 @@ def test_cover_letter_failure_has_no_fake_letter():
 def test_llm_falls_back_on_503(monkeypatch):
     from langchain_core.runnables import RunnableLambda
     from google.genai.errors import ServerError
-    from src.agents.nodes import _llm
+    from src.agents.shared.llm import chat_model
     from src.core import config
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODEL", "modelo-reserva")
 
@@ -233,21 +229,21 @@ def test_llm_falls_back_on_503(monkeypatch):
             return model
         return RunnableLambda(run)
 
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI", side_effect=fake_llm):
-        assert _llm(0).invoke("oi") == "modelo-reserva"
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI", side_effect=fake_llm):
+        assert chat_model(0).invoke("oi") == "modelo-reserva"
 
 def test_llm_falls_back_to_groq_on_quota(monkeypatch):
     from langchain_core.runnables import RunnableLambda
-    from src.agents.nodes import _llm
+    from src.agents.shared.llm import chat_model
     from src.core import config
     monkeypatch.setattr(config, "GROQ_API_KEY", "gsk-teste")
 
     def quota(_):
         raise Exception("429 RESOURCE_EXHAUSTED")
 
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI", return_value=RunnableLambda(quota)), \
-         patch("src.agents.nodes.ChatGroq", return_value=RunnableLambda(lambda _: "groq")):
-        assert _llm(0).invoke("oi") == "groq"
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI", return_value=RunnableLambda(quota)), \
+         patch("src.agents.shared.llm.ChatGroq", return_value=RunnableLambda(lambda _: "groq")):
+        assert chat_model(0).invoke("oi") == "groq"
 
 def test_github_fetcher_success():
     mock_resp = MagicMock()
@@ -326,7 +322,7 @@ def test_resume_generator_single_call_with_readmes_in_prompt():
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = AIMessage(content="# Currículo")
 
-    with patch("src.agents.nodes._llm", return_value=mock_llm):
+    with patch("src.agents.shared.llm.chat_model", return_value=mock_llm):
         result = resume_generator(state)
 
     assert result["generated_resume_md"] == "# Currículo"
@@ -337,13 +333,13 @@ def test_resume_generator_single_call_with_readmes_in_prompt():
     assert "https://github.com/test/nitro-app" in prompt_text
 
 def test_llm_clients_use_bounded_timeout(monkeypatch):
-    from src.agents.nodes import _llm
+    from src.agents.shared.llm import chat_model
     from src.core import config
     monkeypatch.setattr(config, "GEMINI_FALLBACK_MODEL", "modelo-reserva")
     monkeypatch.setattr(config, "GROQ_API_KEY", "gsk-teste")
-    with patch("src.agents.nodes.ChatGoogleGenerativeAI") as gemini, \
-         patch("src.agents.nodes.ChatGroq") as groq:
-        _llm(0)
+    with patch("src.agents.shared.llm.ChatGoogleGenerativeAI") as gemini, \
+         patch("src.agents.shared.llm.ChatGroq") as groq:
+        chat_model(0)
     calls = gemini.call_args_list + groq.call_args_list
     assert len(calls) == 3
     assert all(c.kwargs["timeout"] == 120 and c.kwargs["max_retries"] == 1 for c in calls)
@@ -359,7 +355,7 @@ def test_github_fetcher_reuses_cached_repos():
 
 
 def test_validate_resume_deterministic_semantic_equivalences_and_factual_lock():
-    from src.agents.nodes import _validate_resume_deterministic
+    from src.agents.nodes.reviewer import _validate_resume_deterministic
 
     state = {
         "job_technologies": ["HTML", "SQL", "APIs REST", "Inteligência Artificial Generativa", "C#"],
@@ -399,7 +395,7 @@ def test_validate_resume_deterministic_semantic_equivalences_and_factual_lock():
 
 
 def test_validate_resume_deterministic_gap_never_matched_and_score_capped():
-    from src.agents.nodes import _validate_resume_deterministic
+    from src.agents.nodes.reviewer import _validate_resume_deterministic
 
     state = {
         "job_technologies": ["Java", "Git", "Estrutura de Dados", "Algoritmos"],
@@ -432,7 +428,8 @@ def test_validate_resume_deterministic_gap_never_matched_and_score_capped():
 
 
 def test_readme_evidence_is_not_a_factual_violation():
-    from src.agents.nodes import _validate_resume_deterministic, competency_matcher
+    from src.agents.nodes.analysis import competency_matcher
+    from src.agents.nodes.reviewer import _validate_resume_deterministic
     repos = [{"name": "api", "description": "API de pedidos", "language": "Python", "url": "https://github.com/u/api"}]
     state = {"github_repos": repos, "github_username": "u", "job_technologies": ["Python", "Redis"], "job_keywords": [],
              "base_resume_md": "Dev Python", "github_readmes": {"api": "Cache com Redis e filas."}}
@@ -443,10 +440,11 @@ def test_readme_evidence_is_not_a_factual_violation():
 
 
 def test_truncated_or_empty_resume_is_a_critical_issue():
-    from src.agents.nodes import resume_generator, _validate_resume_deterministic
+    from src.agents.nodes.reviewer import _validate_resume_deterministic
+    from src.agents.nodes.writer import resume_generator
     resp = MagicMock(text="# Fulano\n## RESUMO", usage_metadata={"total_tokens": 10},
                      response_metadata={"finish_reason": "MAX_TOKENS"})
-    with patch("src.agents.nodes._llm") as llm:
+    with patch("src.agents.shared.llm.chat_model") as llm:
         llm.return_value.invoke.return_value = resp
         out = resume_generator({"base_resume_md": "cv", "job_description": "vaga", "job_language": "pt"})
     assert out["generation_truncated"] is True
@@ -459,10 +457,10 @@ def test_truncated_or_empty_resume_is_a_critical_issue():
 
 
 def test_cover_letter_knows_gaps_and_flags_placeholders():
-    from src.agents.nodes import cover_letter_generator
+    from src.agents.nodes.writer import cover_letter_generator
     state = {"job_language": "pt", "generated_resume_md": "# Fulano", "verified_technologies": ["Python"],
              "unmatched_gaps": ["Kubernetes"], "github_repos": []}
-    with patch("src.agents.nodes._llm") as llm:
+    with patch("src.agents.shared.llm.chat_model") as llm:
         llm.return_value.invoke.return_value = MagicMock(text="Prezada equipe da <Nome da empresa>,\nSou dev Python.")
         out = cover_letter_generator(state)
         sent = llm.return_value.invoke.call_args[0][0][1].content
