@@ -25,6 +25,7 @@ class GraphState(TypedDict):
     
     # Processado pelo Resume Generator
     generated_resume_md: Optional[str]
+    generation_truncated: Optional[bool]  # saída cortada pelo limite de tokens do modelo
     
     # Processado pelo Cover Letter Generator
     generated_cover_letter_md: Optional[str]

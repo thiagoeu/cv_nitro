@@ -10,6 +10,7 @@ from src.core import config, quota_manager, competency_matcher as competency_mat
 import requests
 import base64
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.callbacks import get_usage_metadata_callback
 
 MAX_REVIEW_ATTEMPTS = 2
 LLM_TIMEOUT_SECONDS = 120
@@ -83,6 +84,27 @@ def _text(response) -> str:
         text = str(response)
     return re.sub(r"^```(?:markdown|md)?\s*\n(.*?)\n?```$", r"\1", text.strip(), flags=re.DOTALL).strip()
 
+def _invoke_tracked(runnable, payload, prompt_text: str = ""):
+    """
+    Invoca o modelo e registra o consumo de quem de fato respondeu: o callback do LangChain vê o AIMessage
+    mesmo dentro de with_structured_output e da cadeia de fallbacks. Sem metadados (ex.: mocks), estima.
+    """
+    with get_usage_metadata_callback() as cb:
+        result = runnable.invoke(payload)
+    if cb.usage_metadata:
+        for model_name, usage in cb.usage_metadata.items():
+            quota_manager.record_llm_usage(provider=quota_manager.provider_from_model_name(model_name),
+                                           tokens=usage.get("total_tokens", 0))
+    else:
+        quota_manager.record_llm_usage(provider=quota_manager.detect_provider_from_response(result),
+                                       tokens=quota_manager.extract_or_estimate_tokens(result, prompt_text))
+    return result
+
+def _truncated(response) -> bool:
+    """Saída cortada pelo limite de tokens: 'MAX_TOKENS' no Gemini, 'length' no Groq."""
+    meta = getattr(response, "response_metadata", None)
+    return isinstance(meta, dict) and meta.get("finish_reason") in ("MAX_TOKENS", "length")
+
 class JobAnalysis(BaseModel):
     keywords: List[str] = Field(description="Principais palavras-chave, soft-skills e conceitos importantes da vaga.")
     technologies: List[str] = Field(description="Ferramentas, linguagens e frameworks técnicos exigidos ou desejados.")
@@ -120,11 +142,7 @@ def job_analyzer(state: dict) -> dict:
         "Escreva também um resumo enxuto da vaga, que substituirá o texto original nas próximas etapas.\n\n"
         "Vaga:\n{job_description}"
     )
-    result = (prompt | structured_llm).invoke({"job_description": job_description})
-    quota_manager.record_llm_usage(
-        provider=quota_manager.detect_provider_from_response(result),
-        tokens=quota_manager.extract_or_estimate_tokens(result, job_description)
-    )
+    result = _invoke_tracked(prompt | structured_llm, {"job_description": job_description}, job_description)
 
     return {
         "job_keywords": result.keywords,
@@ -461,7 +479,7 @@ def competency_matcher(state: dict) -> dict:
     base_resume = state.get("base_resume_md", "")
     repos = state.get("github_repos", []) or state.get("raw_github_repos", []) or []
 
-    res = competency_matcher_core.classify_competencies(job_technologies, base_resume, repos)
+    res = competency_matcher_core.classify_competencies(job_technologies, base_resume, repos, state.get("github_readmes"))
     verified = res["verified_technologies"]
     gaps = res["unmatched_gaps"]
 
@@ -514,7 +532,8 @@ def resume_generator(state: dict) -> dict:
         classified = competency_matcher_core.classify_competencies(
             state.get("job_technologies", []),
             base_resume,
-            state.get("github_repos", []) or state.get("raw_github_repos", []) or []
+            state.get("github_repos", []) or state.get("raw_github_repos", []) or [],
+            state.get("github_readmes")
         )
         verified_techs = classified["verified_technologies"]
         gaps = classified["unmatched_gaps"]
@@ -596,14 +615,12 @@ REGRAS CRÍTICAS:
             )
         )
     ]
-    response = _llm(temperature=0.2, thinking_level=None).invoke(messages)
-    quota_manager.record_llm_usage(
-        provider=quota_manager.detect_provider_from_response(response),
-        tokens=quota_manager.extract_or_estimate_tokens(response, f"{system_prompt}\n{base_resume}\n{job_desc}\n{portfolio}")
-    )
+    response = _invoke_tracked(_llm(temperature=0.2, thinking_level=None), messages,
+                               f"{system_prompt}\n{base_resume}\n{job_desc}\n{portfolio}")
     generated_text = _text(response)
     return {
         "generated_resume_md": generated_text,
+        "generation_truncated": _truncated(response),
         "agent_trace": [{
             "agent": "resume_generator",
             "step": "Redação Executiva ATS",
@@ -612,9 +629,9 @@ REGRAS CRÍTICAS:
         }]
     }
 
-def _term_in_text(term: str, text_lower: str) -> bool:
-    """Verifica presença de termo técnico respeitando equivalências canônicas e limites de palavras."""
-    return competency_matcher_core.matches_technology(term, text_lower)
+def _term_in_text(term: str, text: str) -> bool:
+    """Verifica presença de termo técnico respeitando equivalências e limites de palavras (texto original, sem .lower())."""
+    return competency_matcher_core.matches_technology(term, text)
 
 PLACEHOLDER_RE = re.compile(r"<[A-Za-zÀ-ÿ0-9\s/—–_.,:-]+>")
 EMAIL_IN_BRACKETS_RE = re.compile(r"^<[^@\s]+@[^@\s]+\.[^@\s]+>$")
@@ -623,41 +640,54 @@ def _unfilled_placeholders(markdown: str):
     """Marcadores <...> não substituídos; e-mails no formato <usuario@dominio> não contam."""
     return [m for m in PLACEHOLDER_RE.finditer(markdown) if not EMAIL_IN_BRACKETS_RE.match(m.group())]
 
-def _critical_patch_section(generated_md: str, critical_issues: list, labels: dict) -> Optional[str]:
-    """
-    Seção a refinar para um problema crítico determinístico, no idioma da vaga.
-    URL de repositório fora do portfólio -> seção de projetos; marcador -> último '## ' antes dele.
-    None quando não identificável (ex.: marcador no cabeçalho, antes da primeira seção).
-    """
-    if any("repositório citado" in issue for issue in critical_issues):
-        return labels["projects"]
-    if any("trava factual" in issue.lower() for issue in critical_issues):
-        return labels["skills"]
-    unfilled = _unfilled_placeholders(generated_md)
-    if unfilled:
-        headers = re.findall(r"(?m)^##\s+(.+?)\s*$", generated_md[:unfilled[0].start()])
-        return headers[-1] if headers else None
+def _sections(markdown: str) -> list:
+    """[(título, corpo)] na ordem do documento; o trecho antes do primeiro '## ' (cabeçalho) tem título None."""
+    parts = re.split(r"(?m)^##[ \t]+(.+?)[ \t]*$", markdown)
+    return [(None, parts[0])] + list(zip(parts[1::2], parts[2::2]))
+
+def _section_of(markdown: str, found) -> Optional[str]:
+    """Título da primeira seção em que found(corpo) é verdadeiro; None se aparece antes no cabeçalho ou em lugar nenhum."""
+    return next((title for title, body in _sections(markdown) if found(body)), None)
+
+def _norm_title(title: str) -> str:
+    return competency_matcher_core._clean_term(re.sub(r"^[#\s]+|[#:\s]+$", "", title or ""))
+
+def _resolve_section(markdown: str, name: Optional[str], labels: dict) -> Optional[str]:
+    """Título real do currículo para a seção indicada pelo revisor; aceita o nome em qualquer idioma de LABELS."""
+    headers = {_norm_title(title): title for title, _ in _sections(markdown) if title}
+    target = _norm_title(name)
+    if target in headers:
+        return headers[target]
+    for lang_labels in LABELS.values():
+        for key, label in lang_labels.items():
+            if _norm_title(label) == target:
+                return headers.get(_norm_title(labels[key]))
     return None
 
-def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool, list[str], dict]:
+def _critical_patch_section(critical_issues: list) -> Optional[str]:
+    """Seção do primeiro defeito crítico localizável; None quando nenhum está dentro de uma seção (ex.: título do cargo)."""
+    return next((section for _, section in critical_issues if section), None)
+
+def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool, list[tuple[str, Optional[str]]], dict]:
     """
     Auditoria determinística Tier 1 (0 tokens de LLM):
     1. Placeholders residuais (<Nome>, <Empresa>, etc.) - Crítico
     2. Integridade de URLs de repositórios citados vs repositórios obtidos do GitHub - Crítico
     3. Conformidade da tabela de habilidades (aviso e cálculo estrutural)
     4. Mapeamento real de termos da vaga e cálculo auditável de ATS (0 a 100, linear)
+    Defeitos críticos saem como (mensagem, seção onde está o defeito ou None).
     """
     critical_issues = []
     warnings = []
     generated_md = generated_md or ""
-    gen_lower = generated_md.lower()
 
     # 1. Placeholders residuais: detecta padrões como <Nome>, <Cargo alvo...>, <Cidade, UF>
     # Excetua endereços de e-mail no formato <usuario@dominio.com>
     unfilled = [m.group() for m in _unfilled_placeholders(generated_md)]
     if unfilled:
         sample = ", ".join(unfilled[:3])
-        critical_issues.append(f"O currículo contém marcadores de preenchimento não substituídos: {sample}")
+        critical_issues.append((f"O currículo contém marcadores de preenchimento não substituídos: {sample}",
+                                _section_of(generated_md, lambda body: bool(_unfilled_placeholders(body)))))
 
     # 2. Integridade de URLs de repositórios do GitHub
     valid_repo_urls = set()
@@ -675,14 +705,14 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
         if url_clean == user_profile_url:
             continue
         if valid_repo_urls and url_clean not in valid_repo_urls:
-            critical_issues.append(f"O repositório citado '{raw_url}' não consta no portfólio retornado pela API do GitHub")
+            critical_issues.append((f"O repositório citado '{raw_url}' não consta no portfólio retornado pela API do GitHub",
+                                    _section_of(generated_md, lambda body, u=raw_url: u in body)))
 
     # Resolução de contexto do candidato e competências classificadas
     job_technologies = [t.strip() for t in (state.get("job_technologies") or []) if t and t.strip()]
     job_keywords = [k.strip() for k in (state.get("job_keywords") or []) if k and k.strip()]
-    base_cv = state.get("base_resume_md", "")
     repos = state.get("github_repos", []) or state.get("raw_github_repos", []) or []
-    candidate_bg = base_cv + " " + " ".join((r.get("name") or "") + " " + (r.get("description") or "") for r in repos)
+    candidate_bg = competency_matcher_core.candidate_evidence(state.get("base_resume_md", ""), repos, state.get("github_readmes"))
 
     unmatched_gaps = state.get("unmatched_gaps") or []
     verified_techs = state.get("verified_technologies") or []
@@ -692,8 +722,15 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
     # 2.1 Trava factual: verificar se alguma pendência técnica não comprovada foi inserida
     if unmatched_gaps:
         for gap in unmatched_gaps:
-            if _term_in_text(gap, gen_lower) and not competency_matcher_core.matches_technology(gap, candidate_bg):
-                critical_issues.append(f"Violação de trava factual: O termo de pendência '{gap}' foi atribuído indevidamente ao histórico.")
+            if _term_in_text(gap, generated_md) and not competency_matcher_core.matches_technology(gap, candidate_bg):
+                critical_issues.append((f"Violação de trava factual: O termo de pendência '{gap}' foi atribuído indevidamente ao histórico.",
+                                        _section_of(generated_md, lambda body, g=gap: _term_in_text(g, body))))
+
+    # 2.2 Currículo vazio ou cortado pelo limite de saída do modelo (sem seção a refinar)
+    if not generated_md.strip():
+        critical_issues.append(("O currículo gerado está vazio", None))
+    if state.get("generation_truncated"):
+        critical_issues.append(("A geração foi interrompida pelo limite de saída do modelo e o currículo está incompleto", None))
 
     # 3. Tabela Markdown de habilidades com 2 colunas
     has_table = bool(re.search(r"\|\s*:?---+\s*\|\s*:?---+\s*\|", generated_md))
@@ -706,14 +743,14 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
     for t in job_technologies:
         if t.lower() in unmatched_gaps_lower:
             continue
-        if _term_in_text(t, gen_lower):
+        if _term_in_text(t, generated_md):
             matched_techs.append(t)
 
     matched_kws = []
     for k in job_keywords:
         if k.lower() in unmatched_gaps_lower:
             continue
-        if _term_in_text(k, gen_lower):
+        if _term_in_text(k, generated_md):
             matched_kws.append(k)
 
     seen = set()
@@ -894,15 +931,13 @@ def section_patcher(state: dict) -> dict:
             current_resume=current_resume,
             language=L["name"]
         )
-        response = _llm(temperature=0.2, thinking_level="low").invoke(formatted_prompt)
-        quota_manager.record_llm_usage(
-            provider=quota_manager.detect_provider_from_response(response),
-            tokens=quota_manager.extract_or_estimate_tokens(response, formatted_prompt)
-        )
+        response = _invoke_tracked(_llm(temperature=0.2, thinking_level="low"), formatted_prompt, formatted_prompt)
         patched_section_md = _text(response)
         updated_resume = splice_markdown_section(current_resume, target_section, patched_section_md)
         return {
             "generated_resume_md": updated_resume,
+            # O patch troca uma seção só: um truncamento anterior do gerador continua valendo
+            "generation_truncated": bool(state.get("generation_truncated")) or _truncated(response),
             "agent_trace": [{
                 "agent": "section_patcher",
                 "step": "Refinamento Cirúrgico de Seção",
@@ -941,9 +976,11 @@ def quality_reviewer(state: dict) -> dict:
 
     # Validação determinística preliminar (Tier 1 - zero tokens)
     is_valid, critical_issues, diag = _validate_resume_deterministic(generated_md, state)
+    issue_msgs = [msg for msg, _ in critical_issues]
 
     def build_result_payload(approved: bool, feedback: str, severity: str, final_score: int,
-                             applied: list, tips: list, target_sec: Optional[str] = None) -> dict:
+                             applied: list, tips: list, target_sec: Optional[str] = None,
+                             final: bool = False) -> dict:
         diagnostic_payload = {
             "ats_score": final_score,
             "matched_keywords": diag["matched_keywords"],
@@ -968,6 +1005,7 @@ def quality_reviewer(state: dict) -> dict:
         stop_reason = None
         current_md = generated_md
         effective_diag = diagnostic_payload
+        kept_current = True
 
         if approved:
             stop_reason = "target_reached"
@@ -976,15 +1014,24 @@ def quality_reviewer(state: dict) -> dict:
             stop_reason = "no_improvement"
             current_md = best_resume
             effective_diag = best_diag or diagnostic_payload
+            kept_current = False
             feedback = f"Revisão interrompida por estagnação da pontuação ATS. A melhor versão ({best_score}%) foi restaurada automaticamente."
             severity = "approved"
             approved = True
-        elif attempts + 1 >= MAX_REVIEW_ATTEMPTS:
+        elif final or attempts + 1 >= MAX_REVIEW_ATTEMPTS:
             stop_reason = "max_attempts"
             if best_resume is not None:
                 current_md = best_resume
                 effective_diag = best_diag or diagnostic_payload
+                kept_current = False
             severity = "approved"
+
+        # Versão mantida ainda com defeito crítico: não aprova e avisa (o snapshot só guarda versões válidas)
+        errors = []
+        if stop_reason and kept_current and not is_valid:
+            approved = False
+            stop_reason = "critical_issues_remaining"
+            errors = [f"Currículo salvo com pendências críticas, revise antes de enviar: {'; '.join(issue_msgs)}."]
 
         trace_status = "success" if approved else ("warning" if severity == "minor" else "error")
         trace_entry = {
@@ -1009,12 +1056,13 @@ def quality_reviewer(state: dict) -> dict:
             "best_diagnostic": best_diag,
             "stop_reason": stop_reason,
             "diagnostic": effective_diag,
+            "errors": errors,
             "agent_trace": [trace_entry]
         }
 
     if not is_valid:
-        feedback_det = "Ajustes necessários no currículo: " + "; ".join(critical_issues) + "."
-        target_sec = _critical_patch_section(generated_md, critical_issues, L)
+        feedback_det = "Ajustes necessários no currículo: " + "; ".join(issue_msgs) + "."
+        target_sec = _critical_patch_section(critical_issues)
         if strict:
             return build_result_payload(False, feedback_det, "minor" if target_sec else "major",
                                         diag["ats_score"], diag["applied_changes"], diag["interview_tips"], target_sec)
@@ -1022,8 +1070,8 @@ def quality_reviewer(state: dict) -> dict:
         if target_sec and attempts == 0:
             return build_result_payload(False, feedback_det, "minor", diag["ats_score"],
                                         diag["applied_changes"], diag["interview_tips"], target_sec)
-        return build_result_payload(True, f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}.",
-                                    "approved", diag["ats_score"], diag["applied_changes"], diag["interview_tips"])
+        return build_result_payload(False, feedback_det, "approved", diag["ats_score"],
+                                    diag["applied_changes"], diag["interview_tips"], final=True)
 
     # Modo econômico (strict_review=False): utiliza apenas o diagnóstico determinístico
     if not strict:
@@ -1047,21 +1095,23 @@ def quality_reviewer(state: dict) -> dict:
             "- Forneça em interview_tips de 2 a 3 orientações para entrevista técnica sobre como defender os requisitos da vaga e destacar os projetos reais.\n"
             "- Classifique severity em 'approved' (aprovado), 'minor' (problema pontual em 1 seção específica) ou 'major' (alucinação grave/reescrita total).\n"
             "- Se severity for 'minor', indique em target_section exatamente qual seção deve ser corrigida (ex.: 'HABILIDADES TÉCNICAS', 'PROJETOS EM DESTAQUE', 'RESUMO PROFISSIONAL').\n\n"
+            "--- VAGA ALVO ---\n{job_context}\n\n"
+            "--- TECNOLOGIAS COMPROVADAS ---\n{verified}\n\n"
+            "--- PENDÊNCIAS TÉCNICAS (o candidato NÃO possui; não podem aparecer como experiência) ---\n{gaps}\n\n"
             "--- CURRÍCULO BASE ---\n{base_resume}\n\n"
             "--- READMEs FORNECIDOS ---\n{portfolio_context}\n\n"
             "--- CURRÍCULO GERADO (Para revisão) ---\n{generated}\n\n"
             "Retorne a análise estruturada."
         )
-        result = (prompt | structured_llm).invoke({
+        result = _invoke_tracked(prompt | structured_llm, {
             "language": L["name"],
+            "job_context": _job_context(state),
+            "verified": ", ".join(state.get("verified_technologies") or []) or "Nenhuma informada.",
+            "gaps": ", ".join(state.get("unmatched_gaps") or []) or "Nenhuma.",
             "base_resume": state.get("base_resume_md", ""),
             "portfolio_context": _portfolio_context(state, 600),
             "generated": state.get("generated_resume_md", "")
-        })
-        quota_manager.record_llm_usage(
-            provider=quota_manager.detect_provider_from_response(result),
-            tokens=quota_manager.extract_or_estimate_tokens(result, generated_md)
-        )
+        }, generated_md)
 
         llm_score = getattr(result, "ats_score", diag["ats_score"])
         final_ats_score = int(diag["ats_score"] * 0.6 + llm_score * 0.4)
@@ -1075,6 +1125,11 @@ def quality_reviewer(state: dict) -> dict:
 
         severity = getattr(result, "severity", "approved" if result.approved else "major")
         target_section = getattr(result, "target_section", None) if not result.approved else None
+        if severity == "minor":
+            # Patch numa seção inexistente não altera nada: sem título real, regenera
+            target_section = _resolve_section(generated_md, target_section, L)
+            if not target_section:
+                severity = "major"
 
         return build_result_payload(
             result.approved,
@@ -1141,26 +1196,29 @@ def cover_letter_generator(state: dict) -> dict:
         "3. **Fit Cultural & Valor**: Mostre compreensão dos objetivos da empresa e como o candidato resolverá os desafios propostos.\n"
         "4. **Fechamento**: Conclusão cordial solicitando uma entrevista/conversa técnica.\n"
         "5. **Alinhamento Rigoroso**: NÃO invente informações que não estejam presentes no currículo do candidato.\n"
+        "6. **Pendências técnicas**: as tecnologias listadas como pendências o candidato NÃO domina. Cite-as no máximo como interesse "
+        "ou disposição para aprender, nunca como experiência, domínio ou projeto realizado.\n"
         "- Retorne APENAS o texto da carta em Markdown limpo, sem cercas de código (```)."
     )
 
     user_prompt = (
         f"--- VAGA ---\n{_job_context(state)}\n\n"
         f"--- CURRÍCULO DO CANDIDATO ---\n{state.get('generated_resume_md', '')}\n\n"
-        f"--- PROJETOS DESTACADOS GITHUB ---\n{repos_summary}"
+        f"--- PROJETOS DESTACADOS GITHUB ---\n{repos_summary}\n\n"
+        f"--- TECNOLOGIAS COMPROVADAS ---\n{', '.join(state.get('verified_technologies') or []) or 'Nenhuma informada.'}\n\n"
+        f"--- PENDÊNCIAS TÉCNICAS (não reivindicar experiência) ---\n{', '.join(state.get('unmatched_gaps') or []) or 'Nenhuma.'}"
     )
 
     try:
-        response = _llm(temperature=0.3).invoke([
+        response = _invoke_tracked(_llm(temperature=0.3), [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
-        ])
-        quota_manager.record_llm_usage(
-            provider=quota_manager.detect_provider_from_response(response),
-            tokens=quota_manager.extract_or_estimate_tokens(response, f"{system_prompt}\n{user_prompt}")
-        )
+        ], f"{system_prompt}\n{user_prompt}")
+        letter = _text(response)
+        unfilled = [m.group() for m in _unfilled_placeholders(letter)]
         return {
-            "generated_cover_letter_md": _text(response),
+            "generated_cover_letter_md": letter,
+            "errors": [f"A carta de apresentação tem marcadores não preenchidos ({', '.join(unfilled[:3])}); revise antes de enviar."] if unfilled else [],
             "agent_trace": [{
                 "agent": "cover_letter_generator",
                 "step": "Redação da Carta de Apresentação",

@@ -91,3 +91,68 @@ def test_nodes_record_quota_automatically():
     assert status["gemini"]["used_tokens"] == 1200
     assert status["gemini"]["used_requests"] == 1
 
+
+
+def test_saved_history_file_does_not_double_count(tmp_path, monkeypatch):
+    import datetime
+    monkeypatch.chdir(tmp_path)
+    qfile = tmp_path / "quota.json"
+    for _ in range(4):
+        quota_manager.record_llm_usage("gemini", tokens=1000, quota_file=qfile)
+    hist = tmp_path / "history"
+    hist.mkdir()
+    (hist / f"{datetime.datetime.now():%Y%m%d_%H%M%S}_Vaga_abc123.md").write_text("<!--\n{}\n-->\n\nCV", encoding="utf-8")
+    status = quota_manager.get_quota_status(qfile)
+    assert status["gemini"]["used_requests"] == 4
+    assert status["gemini"]["used_tokens"] == 4000
+
+
+def test_concurrent_records_are_not_lost(tmp_path):
+    import threading
+    qfile = tmp_path / "quota.json"
+    def worker():
+        for _ in range(25):
+            quota_manager.record_llm_usage("gemini", tokens=1, quota_file=qfile)
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert quota_manager.get_quota_status(qfile)["gemini"]["used_requests"] == 200
+
+
+def test_structured_output_from_groq_fallback_is_attributed_to_groq():
+    from langchain_core.language_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+    from src.agents.nodes import _invoke_tracked
+
+    def gemini_quota_error(_):
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    groq = GenericFakeChatModel(messages=iter([AIMessage(
+        content='{"title": "Dev"}',
+        usage_metadata={"input_tokens": 300, "output_tokens": 20, "total_tokens": 320},
+        response_metadata={"model_name": "openai/gpt-oss-120b"},
+    )]))
+    # Modelo seguido de parser, como no with_structured_output: o resultado final é Pydantic, sem metadados
+    chain = RunnableLambda(gemini_quota_error).with_fallbacks([groq]) | RunnableLambda(lambda m: DummyModel(title="Dev", items=[]))
+    result = _invoke_tracked(chain, "analise a vaga")
+
+    assert isinstance(result, DummyModel)
+    status = quota_manager.get_quota_status()
+    assert (status["groq"]["used_requests"], status["groq"]["used_tokens"]) == (1, 320)
+    assert status["gemini"]["used_requests"] == 0
+
+
+def test_groq_usage_advances_after_live_probe_snapshot(tmp_path):
+    import json
+    qfile = tmp_path / "quota.json"
+    quota_manager.record_llm_usage("groq", tokens=10, quota_file=qfile)
+    data = json.loads(qfile.read_text(encoding="utf-8"))
+    # Retrato de uma consulta ao vivo: 1000 de limite, 999 restantes, contador sincronizado em 1
+    data["groq"].update({"live_limit_requests": 1000, "live_remaining_requests": 999, "requests": 1})
+    qfile.write_text(json.dumps(data), encoding="utf-8")
+    for _ in range(3):
+        quota_manager.record_llm_usage("groq", tokens=10, quota_file=qfile)
+    status = quota_manager.get_quota_status(qfile)["groq"]
+    assert status["used_requests"] == 4
+    assert status["request_limit"] == 1000

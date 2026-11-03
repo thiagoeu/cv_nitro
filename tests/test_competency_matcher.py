@@ -78,3 +78,36 @@ def test_classify_competencies():
     # Taxa calculada corretamente (6 de 9 = 67%)
     assert res["match_rate"] == 67
 
+
+
+def test_siblings_do_not_prove_each_other_but_prove_the_family():
+    m = competency_matcher.matches_technology
+    assert m("PostgreSQL", "Experiência com MySQL") is False
+    assert m("Jest", "testes com pytest") is False
+    assert m("NestJS", "APIs com Express") is False
+    assert m("GitLab", "github.com/fulano") is False
+    assert m("RAG", "uso de LLM") is False
+    assert m("RabbitMQ", "mensageria com Kafka") is False
+    assert m("SQL", "Experiência com MySQL") is True
+    assert m("Git", "github.com/fulano") is True
+    assert m("IA Generativa", "pipelines de RAG") is True
+
+
+def test_short_and_ambiguous_terms_need_technical_spelling():
+    m = competency_matcher.matches_technology
+    assert m("C", "experiência com C#") is False
+    assert m("C", "C++ embarcado") is False
+    assert m("R", "lidero o time de R&D") is False
+    assert m("Go", "conduzi o go-live do sistema") is False
+    assert m("REST", "the rest of the team") is False
+    assert m("Go", "APIs em Go.") is True
+    assert m("Go", "serviços em golang") is True
+    assert m("REST", "APIs REST com FastAPI") is True
+    assert m("C", "firmware em C para microcontroladores") is True
+
+
+def test_readme_counts_as_evidence():
+    repos = [{"name": "api", "description": "API de pedidos", "language": "Python"}]
+    res = competency_matcher.classify_competencies(["Python", "Redis"], "Dev Python", repos, {"api": "Cache com Redis e filas."})
+    assert res["verified_technologies"] == ["Python", "Redis"]
+    assert res["unmatched_gaps"] == []

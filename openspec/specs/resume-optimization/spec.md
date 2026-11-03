@@ -13,11 +13,11 @@ O sistema SHALL extrair os requisitos, tecnologias e soft skills a partir de uma
 - **THEN** o sistema extrai "Python" e tecnologias relacionadas como requisitos
 
 ### Requirement: Buscar evidências no GitHub
-O sistema SHALL listar repositórios públicos concorrentemente com a análise de vaga e permitir a obtenção detalhada de arquivos README sob demanda através de chamada de ferramenta (*tool-calling*) pelo gerador.
+O sistema SHALL listar repositórios públicos concorrentemente com a análise de vaga, ranqueá-los por relevância e fornecer ao gerador, no mesmo contexto da redação, os extratos higienizados dos READMEs dos repositórios selecionados, sem chamadas adicionais ao modelo para obtê-los.
 
 #### Scenario: Repositório correspondente encontrado
 - **WHEN** a vaga exige "Python" e o usuário possui um repositório Python
-- **THEN** o sistema classifica o repositório por pontuação de relevância e disponibiliza o extrato técnico sob demanda
+- **THEN** o sistema classifica o repositório por pontuação de relevância e inclui o extrato técnico do README dele no contexto da geração do currículo
 
 #### Scenario: Repositórios ranqueados por relevância
 - **WHEN** o usuário possui múltiplos repositórios públicos
@@ -34,6 +34,10 @@ O sistema SHALL listar repositórios públicos concorrentemente com a análise d
 #### Scenario: Timeout ou instabilidade na API externa
 - **WHEN** a API do GitHub demorar mais que o tempo limite configurado (timeout)
 - **THEN** o sistema aborta a requisição sem bloquear indefinidamente a aplicação
+
+#### Scenario: Geração com portfólio em uma única chamada
+- **WHEN** o currículo é gerado com repositórios do GitHub selecionados
+- **THEN** a redação do currículo é feita em uma única chamada ao modelo, sem rodada intermediária de ferramenta
 
 ### Requirement: Gerar currículo otimizado
 O sistema SHALL gerar um currículo no formato Markdown incluindo uma seção de "Projetos em Destaque" baseada nas evidências extraídas do GitHub, escrito inteiramente no idioma detectado da vaga (português, inglês ou espanhol), traduzindo o conteúdo do currículo base quando ele estiver em outro idioma.
@@ -52,7 +56,7 @@ O sistema SHALL gerar um currículo no formato Markdown incluindo uma seção de
 - **THEN** a carta de apresentação é escrita no mesmo idioma da vaga
 
 ### Requirement: Revisar currículo gerado
-O sistema SHALL revisar o currículo gerado contra alucinações e conformidade de layout, classificando falhas leves para refinamento cirúrgico de seção (*delta patching*) ou falhas graves para reescrita completa.
+O sistema SHALL revisar o currículo gerado contra alucinações e conformidade de layout, classificando falhas leves para refinamento cirúrgico de seção (*delta patching*) ou falhas graves para reescrita completa. O refinamento MUST localizar a seção pelo título no idioma da vaga.
 
 #### Scenario: Identificação de alucinação ou ajuste de seção
 - **WHEN** o currículo gerado apresenta erro pontual de formatação ou de alinhamento em uma seção específica
@@ -68,11 +72,15 @@ O sistema SHALL revisar o currículo gerado contra alucinações e conformidade 
 
 #### Scenario: Revisão em modo econômico
 - **WHEN** a execução estiver configurada em modo econômico (`strict_review=False`)
-- **THEN** o sistema valida o currículo e gera o diagnóstico de aderência de termos utilizando apenas as regras determinísticas, sem invocar o modelo auditor
+- **THEN** o sistema valida o currículo e gera o diagnóstico de aderência de termos utilizando apenas as regras determinísticas, sem invocar o modelo auditor, exceto pelo refinamento de seção previsto para defeitos críticos
 
 #### Scenario: Falha de API durante a auditoria
 - **WHEN** a API do auditor falhar ou exceder limites
 - **THEN** o revisor não aprova silenciosamente o documento e sinaliza o erro explicitamente no estado
+
+#### Scenario: Refinamento em currículo de vaga em inglês
+- **WHEN** um currículo gerado para vaga em inglês cita uma URL de repositório que não consta no portfólio retornado pelo GitHub
+- **THEN** o refinamento reescreve a seção "KEY PROJECTS" e a URL inexistente deixa de constar no currículo
 
 ### Requirement: Suporte a upload de currículo em múltiplos formatos
 O sistema SHALL permitir o carregamento do currículo base através de upload de arquivos nos formatos PDF, DOCX ou Markdown, extraindo o conteúdo de texto para envio ao grafo de agentes.
@@ -97,11 +105,19 @@ O sistema SHALL identificar automaticamente o idioma da descrição da vaga (por
 - **THEN** o currículo otimizado gerado é redigido integralmente em português
 
 ### Requirement: Geração de Cover Letter personalizada
-O sistema SHALL produzir uma Carta de Apresentação (Cover Letter) altamente personalizada para a vaga, conectando a trajetória do candidato e repositórios do GitHub com os requisitos solicitados.
+O sistema SHALL produzir uma Carta de Apresentação (Cover Letter) altamente personalizada para a vaga, conectando a trajetória do candidato e repositórios do GitHub com os requisitos solicitados, sem atribuir ao candidato experiência nas pendências técnicas identificadas.
 
 #### Scenario: Geração de Cover Letter com sucesso
 - **WHEN** o processo de otimização de currículo é concluído
 - **THEN** o sistema disponibiliza a Cover Letter no mesmo idioma da vaga, destacando fit cultural e técnico
+
+#### Scenario: Vaga com pendências técnicas
+- **WHEN** a vaga exige tecnologias classificadas como pendências técnicas
+- **THEN** a carta pode citá-las apenas como interesse ou disposição para aprender, nunca como experiência do candidato
+
+#### Scenario: Carta com marcador não preenchido
+- **WHEN** a carta gerada contém um marcador no formato `<...>` que não é um endereço de e-mail
+- **THEN** a carta é salva e o usuário vê um aviso indicando que ela precisa de revisão manual
 
 ### Requirement: Sanitização de saída HTML do currículo
 O sistema SHALL sanitizar e escapar caracteres especiais HTML (XSS prevention) em todo o conteúdo gerado antes da renderização e exportação.
@@ -111,7 +127,7 @@ O sistema SHALL sanitizar e escapar caracteres especiais HTML (XSS prevention) e
 - **THEN** o formatador escapa os caracteres perigosos impedindo a execução de scripts no navegador
 
 ### Requirement: Falhas do modelo visíveis ao usuário
-O sistema SHALL informar ao usuário quando uma chamada ao modelo de IA falhar e MUST NOT salvar no histórico um currículo ou carta de fallback como se fosse resultado otimizado.
+O sistema SHALL informar ao usuário quando uma chamada ao modelo de IA ou a consulta ao GitHub falhar e MUST NOT salvar no histórico um currículo ou carta de fallback como se fosse resultado otimizado.
 
 #### Scenario: Falha na análise da vaga ou na geração do currículo
 - **WHEN** a chamada ao modelo falha na análise da vaga ou na geração do currículo
@@ -121,6 +137,10 @@ O sistema SHALL informar ao usuário quando uma chamada ao modelo de IA falhar e
 - **WHEN** a chamada ao modelo falha no revisor ou no gerador de carta
 - **THEN** o currículo gerado é salvo e o usuário vê um aviso descrevendo a etapa que falhou
 - **AND** nenhuma carta genérica de fallback é exibida ou salva
+
+#### Scenario: Avisos de várias etapas na mesma execução
+- **WHEN** a consulta ao GitHub e a geração da carta falham na mesma otimização
+- **THEN** a tela da candidatura exibe os dois avisos, inclusive ao ser reaberta depois
 
 ### Requirement: Preservar estrutura do currículo enviado
 O sistema SHALL extrair o texto de currículos DOCX na ordem em que parágrafos e tabelas aparecem no documento, representando linhas de tabela como linhas de tabela Markdown.
@@ -141,7 +161,7 @@ O sistema SHALL renderizar a tabela Markdown de habilidades como tabela na visua
 - **THEN** ela não é exibida como barra de contatos
 
 ### Requirement: Controle modular de etapas e economia de tokens
-O sistema SHALL permitir a execução configurável do pipeline multi-agente, possibilitando ativar ou desativar etapas opcionais para redução no consumo de tokens e tempo de resposta.
+O sistema SHALL permitir a execução configurável do pipeline multi-agente, possibilitando ativar ou desativar etapas opcionais para redução no consumo de tokens e tempo de resposta, sem deixar de corrigir defeitos críticos detectados por validação determinística.
 
 #### Scenario: Execução em modo econômico sem carta de apresentação
 - **WHEN** o usuário desmarca a geração de Cover Letter nas opções da otimização
@@ -150,6 +170,10 @@ O sistema SHALL permitir a execução configurável do pipeline multi-agente, po
 #### Scenario: Execução com revisão simplificada
 - **WHEN** o usuário ativa o modo econômico de tokens
 - **THEN** o sistema executa prompts enxutos de resumo de contexto e limita loops de refinamento da LLM
+
+#### Scenario: Defeito crítico no modo econômico
+- **WHEN** no modo econômico a validação determinística encontra um marcador não preenchido ou uma URL de repositório fora do portfólio dentro de uma seção identificável
+- **THEN** o sistema executa um único refinamento dessa seção sem acionar o revisor por modelo e registra no diagnóstico os problemas que restarem
 
 ### Requirement: Higienizar e filtrar conteúdo de READMEs
 O sistema SHALL remover elementos visuais e metadados irrelevantes de READMEs (como badges, imagens e seções triviais de licença) e fornecer um extrato técnico estruturado com limite controlado de caracteres para o gerador de currículo e carta de apresentação.
@@ -184,7 +208,7 @@ O sistema SHALL realizar o download dos arquivos README dos repositórios seleci
 - **THEN** as requisições para obtenção dos conteúdos de README são disparadas concorrentemente respeitando o tempo limite configurado
 
 ### Requirement: Mapear competências comprovadas e isolar pendências técnicas
-O sistema SHALL classificar previamente os requisitos da vaga contra o perfil e portfólio do candidato em tecnologias comprovadas (diretas ou equivalentes) e pendências técnicas reais, proibindo estritamente a inserção de pendências técnicas na tabela de habilidades ou experiências profissionais do currículo gerado.
+O sistema SHALL classificar previamente os requisitos da vaga contra o perfil e portfólio do candidato em tecnologias comprovadas (diretas ou equivalentes) e pendências técnicas reais, proibindo estritamente a inserção de pendências técnicas na tabela de habilidades ou experiências profissionais do currículo gerado. A classificação MUST usar a mesma base de evidências fornecida ao gerador e MUST NOT tratar tecnologias irmãs de uma mesma família como equivalentes.
 
 #### Scenario: Vaga com requisitos não comprovados pelo histórico
 - **WHEN** a vaga exige tecnologias ausentes no currículo base e no portfólio do candidato (como C# ou .NET para perfil Node/React)
@@ -193,3 +217,73 @@ O sistema SHALL classificar previamente os requisitos da vaga contra o perfil e 
 #### Scenario: Uso exclusivo de repositórios comprovados em projetos
 - **WHEN** a seção de projetos em destaque é redigida
 - **THEN** o gerador utiliza exclusivamente os repositórios selecionados no portfólio comprovado do GitHub com suas respectivas URLs
+
+#### Scenario: Tecnologia específica exigida e candidato com uma irmã
+- **WHEN** a vaga exige PostgreSQL e o candidato comprova apenas MySQL
+- **THEN** PostgreSQL é classificado como pendência técnica
+- **AND** um requisito genérico como SQL continua comprovado por MySQL
+
+#### Scenario: Evidência presente apenas no README de um repositório selecionado
+- **WHEN** a vaga exige Redis, o currículo base não cita Redis e o README de um dos repositórios selecionados descreve o uso de Redis
+- **THEN** Redis é classificado como tecnologia comprovada
+- **AND** a menção a Redis na seção de projetos não é tratada como violação da trava factual
+
+#### Scenario: Termo técnico curto e ambíguo
+- **WHEN** a vaga exige C, R ou Go e o currículo do candidato cita apenas C#, C++, "R&D" ou "go-live"
+- **THEN** o requisito é classificado como pendência técnica e não como tecnologia comprovada
+
+### Requirement: Tempo máximo das chamadas de modelo
+O sistema SHALL limitar cada tentativa de chamada a um modelo a 120 segundos, com no máximo uma nova tentativa por modelo antes de passar ao modelo de reserva, e MUST encerrar a otimização com erro visível quando todos os modelos falharem.
+
+#### Scenario: Modelo principal sem resposta
+- **WHEN** o modelo principal não responde dentro do limite de tempo
+- **THEN** o sistema passa para o próximo modelo de reserva configurado
+
+#### Scenario: Todos os modelos indisponíveis
+- **WHEN** o modelo principal e todos os modelos de reserva falham
+- **THEN** o usuário vê uma mensagem de erro e nenhuma candidatura é salva
+
+### Requirement: Corrigir a seção onde está o defeito crítico
+O sistema SHALL direcionar o refinamento de seção para a seção do currículo que contém o defeito crítico detectado pela validação determinística (marcador não preenchido, URL de repositório fora do portfólio ou pendência técnica atribuída ao candidato). Quando o defeito estiver fora de qualquer seção, como no título do cargo, o modo rígido MUST regenerar o currículo inteiro.
+
+#### Scenario: Pendência técnica no resumo profissional
+- **WHEN** o currículo gerado atribui ao candidato uma pendência técnica dentro da seção de resumo profissional
+- **THEN** o refinamento reescreve a seção de resumo profissional, e não a de habilidades técnicas
+
+#### Scenario: Pendência técnica no título do cargo em modo rígido
+- **WHEN** em modo rígido o currículo gerado cita uma pendência técnica no título do cargo, antes da primeira seção
+- **THEN** o sistema regenera o currículo completo com o feedback do defeito
+
+### Requirement: Não aprovar currículo com defeito crítico remanescente
+O sistema MUST NOT marcar como aprovado um currículo cuja versão final ainda contenha defeito crítico da validação determinística, em modo rígido ou econômico. O currículo é salvo e o usuário vê um aviso que descreve os defeitos que restaram.
+
+#### Scenario: Defeito não corrigido no modo econômico
+- **WHEN** no modo econômico o refinamento de seção não remove a pendência técnica atribuída ao candidato
+- **THEN** a candidatura é salva sem a marcação de aprovada
+- **AND** a tela da candidatura exibe um aviso citando a pendência técnica, inclusive ao ser reaberta depois
+
+#### Scenario: Limite de tentativas atingido com melhor versão válida
+- **WHEN** em modo rígido o limite de tentativas é atingido e uma versão anterior sem defeitos críticos foi registrada
+- **THEN** o sistema salva essa versão anterior e nenhum aviso de defeito crítico é exibido
+
+### Requirement: Detectar currículo vazio ou truncado
+O sistema SHALL tratar como defeito crítico um currículo gerado vazio ou cuja geração tenha sido interrompida pelo limite de saída do modelo.
+
+#### Scenario: Resposta vazia do gerador em modo econômico
+- **WHEN** o gerador retorna texto vazio e a revisão está em modo econômico
+- **THEN** a candidatura não é marcada como aprovada e o usuário vê um aviso de currículo vazio
+
+#### Scenario: Saída interrompida pelo limite de tokens
+- **WHEN** o modelo encerra a geração do currículo por atingir o limite de saída
+- **THEN** a validação determinística registra o defeito crítico de currículo truncado
+
+### Requirement: Conferir a seção indicada pelo revisor por modelo
+O sistema SHALL conferir a seção que o revisor por modelo indicar para refinamento com os títulos existentes no currículo, aceitando o nome da seção em qualquer um dos idiomas suportados. Quando a seção não existir no currículo, o sistema MUST regenerar o currículo em vez de executar um refinamento que não altera o documento.
+
+#### Scenario: Seção indicada em outro idioma
+- **WHEN** o currículo está em inglês e o revisor indica "HABILIDADES TÉCNICAS" para refinamento
+- **THEN** o refinamento é aplicado à seção "TECHNICAL SKILLS"
+
+#### Scenario: Seção inexistente no currículo
+- **WHEN** o revisor indica para refinamento uma seção que não corresponde a nenhum título do currículo
+- **THEN** o sistema regenera o currículo completo com o feedback do revisor

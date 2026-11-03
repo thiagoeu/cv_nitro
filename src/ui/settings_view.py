@@ -63,17 +63,11 @@ def render_settings_view(clear_history_cache_cb: Optional[Callable] = None):
     quota_status = quota_manager.get_quota_status()
     gem = quota_status["gemini"]
     grq = quota_status["groq"]
-    synced_hist_count = quota_status.get("synced_history_count", 0)
 
     with st.container(border=True):
         st.markdown("#### :material/monitoring: Monitor de Cota & Capacidade de Tokens (Hoje)")
-        hist_note = (
-            f" · Inclui **{synced_hist_count} currículo(s) já gerado(s) hoje** na pasta `history/`."
-            if synced_hist_count > 0
-            else ""
-        )
         st.caption(
-            f"Acompanhe a porcentagem disponível de tokens e requisições diárias para saber se é seguro continuar gerando currículos sem erro HTTP 429{hist_note}"
+            "Acompanhe a porcentagem disponível de tokens e requisições diárias para saber se é seguro continuar gerando currículos sem erro HTTP 429."
         )
 
         col_q_gem, col_q_grq = st.columns(2, gap="medium")

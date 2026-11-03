@@ -10,7 +10,7 @@ from src.agents.nodes import (
     splice_markdown_section,
     cover_letter_generator
 )
-from src.agents.graph import route_after_review
+from src.agents.graph import route_after_review, END
 from src.agents.state import GraphState
 
 def test_score_repository_fork_rejected():
@@ -100,7 +100,7 @@ Desenvolvedor experiente.
 """
     is_valid, critical_issues, diag = _validate_resume_deterministic(resume_with_placeholder, state)
     assert is_valid is False
-    assert any("marcadores de preenchimento" in issue for issue in critical_issues)
+    assert any("marcadores de preenchimento" in msg for msg, _ in critical_issues)
     assert diag["ats_score"] >= 50
 
 def test_validate_resume_deterministic_detects_hallucinated_repos():
@@ -128,7 +128,7 @@ Desenvolvedor experiente.
 """
     is_valid, critical_issues, diag = _validate_resume_deterministic(resume_with_fake_repo, state)
     assert is_valid is False
-    assert any("não consta no portfólio retornado" in issue for issue in critical_issues)
+    assert any("não consta no portfólio retornado" in msg for msg, _ in critical_issues)
 
 def test_validate_resume_deterministic_calculates_real_ats_score():
     state = {
@@ -403,10 +403,17 @@ def test_economic_mode_patches_critical_issue_once():
     first = quality_reviewer(_en_review_state(strict_review=False))
     assert first["reviewer_approved"] is False
     assert (first["review_severity"], first["patch_section"]) == ("minor", "KEY PROJECTS")
-    # Na segunda passagem o modo econômico aprova e registra o que restou, sem novo patch
+    # Na segunda passagem o defeito continua: não aprova, encerra sem novo patch e avisa o usuário
     second = quality_reviewer(_en_review_state(strict_review=False, review_attempts=1))
-    assert second["reviewer_approved"] is True
-    assert "invented-repo" in second["diagnostic"]["reviewer_summary"]
+    assert second["reviewer_approved"] is False
+    assert second["stop_reason"] == "critical_issues_remaining"
+    assert "invented-repo" in second["errors"][0]
+    assert route_after_review({**second, "generate_cover_letter": False}) == END
+
+def test_route_ends_on_any_stop_reason():
+    state = {"reviewer_approved": False, "review_attempts": 1, "review_severity": "minor",
+             "patch_section": "SKILLS", "stop_reason": "qualquer_motivo_novo", "generate_cover_letter": True}
+    assert route_after_review(state) == "cover_letter_generator"
 
 def test_economic_graph_runs_single_patch_without_reviewer_llm():
     from src.agents.graph import build_graph
@@ -419,7 +426,7 @@ def test_economic_graph_runs_single_patch_without_reviewer_llm():
          patch("src.agents.graph.resume_generator", return_value={"generated_resume_md": EN_RESUME_WITH_FAKE_REPO}) as mock_gen, \
          patch("src.agents.nodes._llm", return_value=mock_llm) as llm_factory:
         final = build_graph().invoke({
-            "job_description": "Python", "base_resume_md": "cv", "github_username": "johndoe",
+            "job_description": "Python", "base_resume_md": "Python developer", "github_username": "johndoe",
             "review_attempts": 0, "strict_review": False, "generate_cover_letter": False,
         })
 
@@ -437,3 +444,89 @@ def test_ats_score_is_linear_without_floor():
     full = "# Fulano\n| a | b |\n| :--- | :--- |\n| Stack | Rust, Go, Kafka |"
     _, _, all_match = _validate_resume_deterministic(full, state)
     assert all_match["ats_score"] == 100
+
+GAP_STATE = {"github_repos": [], "github_username": "", "job_technologies": ["Python", "Kubernetes"], "job_keywords": [],
+             "base_resume_md": "Dev Python", "unmatched_gaps": ["Kubernetes"], "verified_technologies": ["Python"],
+             "job_language": "pt", "review_attempts": 0, "strict_review": True}
+
+def test_factual_violation_targets_the_section_where_it_is():
+    md = ("# Fulano\n### Dev\n\n## RESUMO PROFISSIONAL\nEspecialista em Kubernetes.\n\n"
+          "## HABILIDADES TÉCNICAS\n| Categoria | Tec |\n| :--- | :--- |\n| **Back** | Python |\n")
+    result = quality_reviewer({**GAP_STATE, "generated_resume_md": md})
+    assert (result["review_severity"], result["patch_section"]) == ("minor", "RESUMO PROFISSIONAL")
+
+def test_factual_violation_in_job_title_regenerates_in_strict_mode():
+    md = "# Fulano\n### Engenheiro Kubernetes\n\n## RESUMO PROFISSIONAL\nDev Python.\n"
+    result = quality_reviewer({**GAP_STATE, "generated_resume_md": md})
+    assert (result["review_severity"], result["patch_section"]) == ("major", None)
+
+EN_VALID = ("# John\n### Developer\n\n## PROFESSIONAL SUMMARY\nI build Python APIs.\n\n"
+            "## TECHNICAL SKILLS\n| Category | Tech |\n| :--- | :--- |\n| **Back** | Python |\n")
+
+def _llm_review(state, review):
+    """Roda o revisor rígido com um ReviewResult fixo e devolve (resultado, prompt enviado ao modelo)."""
+    from langchain_core.runnables import RunnableLambda
+    sent = []
+    with patch("src.agents.nodes._llm") as llm:
+        llm.return_value.with_structured_output.return_value = RunnableLambda(lambda p: sent.append(p.to_string()) or review)
+        result = quality_reviewer(state)
+    return result, sent[0]
+
+def test_reviewer_section_name_is_resolved_across_languages():
+    from src.agents.nodes import ReviewResult
+    state = {"generated_resume_md": EN_VALID, "job_language": "en", "job_technologies": ["Python"], "job_keywords": [],
+             "base_resume_md": "Python dev", "github_repos": [], "review_attempts": 0, "strict_review": True}
+    pt_name = ReviewResult(approved=False, feedback="x", severity="minor", target_section="HABILIDADES TÉCNICAS")
+    result, _ = _llm_review(state, pt_name)
+    assert (result["review_severity"], result["patch_section"]) == ("minor", "TECHNICAL SKILLS")
+
+    missing = ReviewResult(approved=False, feedback="x", severity="minor", target_section="KEY PROJECTS")
+    result, _ = _llm_review(state, missing)
+    assert result["review_severity"] == "major"
+    assert route_after_review(result) == "resume_generator"
+
+def test_reviewer_prompt_includes_job_and_gaps():
+    from src.agents.nodes import ReviewResult
+    state = {"generated_resume_md": EN_VALID, "job_language": "en", "job_technologies": ["Python", "Kubernetes"],
+             "job_keywords": [], "job_summary": "Backend role at ACME building payment APIs.",
+             "verified_technologies": ["Python"], "unmatched_gaps": ["Kubernetes"],
+             "base_resume_md": "Python dev", "github_repos": [], "review_attempts": 0, "strict_review": True}
+    _, prompt = _llm_review(state, ReviewResult(approved=True, feedback="ok"))
+    assert "Backend role at ACME" in prompt
+    assert "Kubernetes" in prompt.split("PENDÊNCIAS TÉCNICAS")[1]
+
+KUBE_RESUME = ("# Fulano\n### Desenvolvedor Python\n\n## RESUMO PROFISSIONAL\nEspecialista em Kubernetes e Python.\n\n"
+               "## HABILIDADES TÉCNICAS\n| Categoria | Tec |\n| :--- | :--- |\n| **Back** | Python |\n")
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("patch_fixes", [True, False])
+def test_audit_scenario_gap_in_summary(strict, patch_fixes):
+    """Reproduz a auditoria: lacuna no resumo nunca pode terminar aprovada nem sem aviso."""
+    from langchain_core.runnables import RunnableLambda
+    from src.agents.graph import build_graph
+    from src.agents.nodes import JobAnalysis, ReviewResult
+    summary = "Desenvolvedor Python." if patch_fixes else "Especialista em Kubernetes."
+
+    class FakeLLM:
+        def with_structured_output(self, schema):
+            out = (JobAnalysis(keywords=[], technologies=["Python", "Kubernetes"], language="pt", summary="vaga")
+                   if schema is JobAnalysis else ReviewResult(approved=True, feedback="ok"))
+            return RunnableLambda(lambda _: out)
+        def invoke(self, msgs):
+            is_patch = isinstance(msgs, str) and "EXCLUSIVAMENTE" in msgs
+            text = f"## RESUMO PROFISSIONAL\n{summary}" if is_patch else KUBE_RESUME
+            return MagicMock(text=text, usage_metadata={"total_tokens": 1}, response_metadata={})
+
+    with patch("src.agents.nodes._llm", return_value=FakeLLM()), patch("src.core.quota_manager.record_llm_usage"):
+        final = build_graph().invoke({"job_description": "vaga", "base_resume_md": "Desenvolvedor Python", "github_username": "",
+                                      "review_attempts": 0, "strict_review": strict, "generate_cover_letter": False})
+
+    patches = [t["detail"] for t in final["agent_trace"] if t["agent"] == "section_patcher"]
+    assert patches and "RESUMO PROFISSIONAL" in patches[0]
+    if patch_fixes:
+        assert "Kubernetes" not in final["generated_resume_md"]
+        assert final["reviewer_approved"] is True and not final.get("errors")
+    else:
+        assert final["reviewer_approved"] is False
+        assert final["stop_reason"] == "critical_issues_remaining"
+        assert any("Kubernetes" in e for e in final["errors"])

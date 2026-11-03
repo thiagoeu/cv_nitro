@@ -47,3 +47,15 @@ O sistema SHALL calcular a pontuação de compatibilidade ATS (de 0 a 100) e o d
 #### Scenario: Diagnóstico detalhado de correspondência de termos
 - **WHEN** a análise ATS é gerada
 - **THEN** o diagnóstico lista explicitamente quais termos da vaga foram identificados (diretos ou equivalentes) e quais requisitos estruturais foram cumpridos
+
+#### Scenario: Tecnologia irmã não conta como correspondência
+- **WHEN** a vaga exige Jest e o currículo gerado cita apenas pytest
+- **THEN** Jest não é contado como termo identificado e não aumenta a pontuação ATS
+
+#### Scenario: Palavra comum não conta como tecnologia
+- **WHEN** a vaga exige REST ou Go e o currículo gerado contém apenas "the rest of" ou "go-live"
+- **THEN** o termo não é contado como identificado
+
+#### Scenario: Nota do revisor por modelo considera a vaga
+- **WHEN** a revisão roda em modo rígido e o revisor por modelo atribui sua nota
+- **THEN** o revisor recebe o resumo da vaga, os termos ATS e as listas de tecnologias comprovadas e de pendências técnicas antes de pontuar

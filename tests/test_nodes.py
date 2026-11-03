@@ -395,7 +395,7 @@ def test_validate_resume_deterministic_semantic_equivalences_and_factual_lock():
     """
     is_valid_inv, critical_issues_inv, _ = _validate_resume_deterministic(cv_invented, state)
     assert is_valid_inv is False
-    assert any("Violação de trava factual" in issue for issue in critical_issues_inv)
+    assert any("Violação de trava factual" in msg for msg, _ in critical_issues_inv)
 
 
 def test_validate_resume_deterministic_gap_never_matched_and_score_capped():
@@ -429,3 +429,43 @@ def test_validate_resume_deterministic_gap_never_matched_and_score_capped():
     assert "Java" in diag["missing_keywords"]
     # O Score ATS JAMAIS pode ser 100% quando há pendência técnica na stack da vaga
     assert diag["ats_score"] < 80
+
+
+def test_readme_evidence_is_not_a_factual_violation():
+    from src.agents.nodes import _validate_resume_deterministic, competency_matcher
+    repos = [{"name": "api", "description": "API de pedidos", "language": "Python", "url": "https://github.com/u/api"}]
+    state = {"github_repos": repos, "github_username": "u", "job_technologies": ["Python", "Redis"], "job_keywords": [],
+             "base_resume_md": "Dev Python", "github_readmes": {"api": "Cache com Redis e filas."}}
+    state.update(competency_matcher(state))
+    assert "Redis" in state["verified_technologies"]
+    is_valid, critical, _ = _validate_resume_deterministic("## PROJETOS EM DESTAQUE\n- **Cache:** Implementei cache com Redis\n", state)
+    assert is_valid and critical == []
+
+
+def test_truncated_or_empty_resume_is_a_critical_issue():
+    from src.agents.nodes import resume_generator, _validate_resume_deterministic
+    resp = MagicMock(text="# Fulano\n## RESUMO", usage_metadata={"total_tokens": 10},
+                     response_metadata={"finish_reason": "MAX_TOKENS"})
+    with patch("src.agents.nodes._llm") as llm:
+        llm.return_value.invoke.return_value = resp
+        out = resume_generator({"base_resume_md": "cv", "job_description": "vaga", "job_language": "pt"})
+    assert out["generation_truncated"] is True
+
+    state = {"github_repos": [], "job_technologies": [], "job_keywords": []}
+    ok, issues, _ = _validate_resume_deterministic(out["generated_resume_md"], {**state, "generation_truncated": True})
+    assert not ok and issues[-1][1] is None
+    ok_empty, issues_empty, _ = _validate_resume_deterministic("", state)
+    assert not ok_empty and "vazio" in issues_empty[0][0]
+
+
+def test_cover_letter_knows_gaps_and_flags_placeholders():
+    from src.agents.nodes import cover_letter_generator
+    state = {"job_language": "pt", "generated_resume_md": "# Fulano", "verified_technologies": ["Python"],
+             "unmatched_gaps": ["Kubernetes"], "github_repos": []}
+    with patch("src.agents.nodes._llm") as llm:
+        llm.return_value.invoke.return_value = MagicMock(text="Prezada equipe da <Nome da empresa>,\nSou dev Python.")
+        out = cover_letter_generator(state)
+        sent = llm.return_value.invoke.call_args[0][0][1].content
+    assert "Kubernetes" in sent.split("PENDÊNCIAS TÉCNICAS")[1]
+    assert "<Nome da empresa>" in out["generated_cover_letter_md"]
+    assert out["errors"] and "<Nome da empresa>" in out["errors"][0]

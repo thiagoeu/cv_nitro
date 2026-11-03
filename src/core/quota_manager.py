@@ -1,24 +1,17 @@
 import datetime
 import json
 import pathlib
-import re
+import threading
 from typing import Any, Dict, Optional
 import requests
 from src.core import config
 
-_DEFAULT_QUOTA_FILE = pathlib.Path("profiles/quota_usage.json")
-QUOTA_FILE = _DEFAULT_QUOTA_FILE
-HISTORY_DIR = pathlib.Path("history")
+QUOTA_FILE = pathlib.Path("profiles/quota_usage.json")
 AVG_TOKENS_PER_OPTIMIZATION = 4500
 AVG_REQUESTS_PER_OPTIMIZATION = 4
 
-LLM_AGENT_STEPS = {
-    "job_analyzer",
-    "resume_generator",
-    "section_patcher",
-    "quality_reviewer",
-    "cover_letter_generator",
-}
+# ponytail: trava só dentro do processo (sessões do Streamlit são threads); vários workers exigiriam trava de arquivo
+_LOCK = threading.Lock()
 
 
 def _today_str() -> str:
@@ -39,106 +32,22 @@ def _default_usage(date_str: str) -> Dict[str, Any]:
             "live_reset_requests": "",
             "live_status": "",
         },
-        "synced_history_files": [],
         "last_updated": datetime.datetime.now().isoformat(),
     }
-
-
-def _estimate_history_file_usage(md_path: pathlib.Path) -> Dict[str, int]:
-    """
-    Estima tokens e requisições de um currículo salvo em history/ hoje,
-    lendo o metadado JSON e o corpo do documento.
-    """
-    try:
-        raw = md_path.read_text(encoding="utf-8")
-    except Exception:
-        return {"tokens": AVG_TOKENS_PER_OPTIMIZATION, "requests": AVG_REQUESTS_PER_OPTIMIZATION}
-
-    requests_count = AVG_REQUESTS_PER_OPTIMIZATION
-    m = re.match(r"^<!--\s*(\{.*?\})\s*-->", raw, flags=re.DOTALL)
-    if m:
-        try:
-            meta = json.loads(m.group(1))
-            diag = meta.get("diagnostic") or {}
-            trace = diag.get("agent_trace") or []
-            if trace:
-                llm_steps = [
-                    step for step in trace
-                    if isinstance(step, dict) and step.get("agent") in LLM_AGENT_STEPS
-                ]
-                # Se rodou em modo econômico sem LLM no revisor, desconta 1 se parecer determinístico
-                rev_summary = str(diag.get("reviewer_summary") or "")
-                reqs = len(llm_steps)
-                if "modo econômico" in rev_summary.lower() and reqs > 2:
-                    reqs -= 1
-                requests_count = max(2, reqs)
-            elif meta.get("has_cover_letter"):
-                requests_count = 4
-            else:
-                requests_count = 3
-        except Exception:
-            pass
-
-    # Cada chamada envia prompt + contexto; estimamos tokens totais proporcionalmente ao tamanho do arquivo e etapas
-    estimated_tokens = max(2500, min(18000, (len(raw) // 4) + (requests_count * 900)))
-    return {"tokens": estimated_tokens, "requests": requests_count}
-
-
-def _sync_today_history_into_usage(
-    data: Dict[str, Any],
-    quota_file: Optional[pathlib.Path] = None,
-) -> bool:
-    """
-    Sincroniza automaticamente os currículos gerados hoje na pasta history/
-    que ainda não foram contabilizados no arquivo de cota (ex.: gerados antes do monitor).
-    Apenas executa para o arquivo de produção padrão (QUOTA_FILE) para não afetar testes isolados.
-    """
-    target_path = quota_file or QUOTA_FILE
-    if target_path != _DEFAULT_QUOTA_FILE or not HISTORY_DIR.exists():
-        return False
-
-    today_compact = datetime.date.today().strftime("%Y%m%d")
-    synced = set(data.get("synced_history_files") or [])
-    changed = False
-
-    for md_file in sorted(HISTORY_DIR.glob(f"{today_compact}_*.md")):
-        if md_file.name in synced:
-            continue
-        est = _estimate_history_file_usage(md_file)
-        gem = data.setdefault("gemini", {"tokens": 0, "requests": 0})
-        gem["tokens"] = int(gem.get("tokens", 0)) + est["tokens"]
-        gem["requests"] = int(gem.get("requests", 0)) + est["requests"]
-        synced.add(md_file.name)
-        changed = True
-
-    if changed:
-        data["synced_history_files"] = sorted(synced)
-    return changed
 
 
 def _load_usage(quota_file: Optional[pathlib.Path] = None) -> Dict[str, Any]:
     path = quota_file or QUOTA_FILE
     today = _today_str()
-    if not path.exists():
-        data = _default_usage(today)
-        if _sync_today_history_into_usage(data, path):
-            _save_usage(data, path)
-        return data
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or data.get("date") != today:
-            data = _default_usage(today)
-            if _sync_today_history_into_usage(data, path):
-                _save_usage(data, path)
-            return data
-        data.setdefault("gemini", {"tokens": 0, "requests": 0})
-        data.setdefault("groq", {"tokens": 0, "requests": 0})
-        data.setdefault("synced_history_files", [])
-        if not data.get("manual_reset") and _sync_today_history_into_usage(data, path):
-            _save_usage(data, path)
-        return data
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
     except Exception:
+        data = None
+    if not isinstance(data, dict) or data.get("date") != today:
         return _default_usage(today)
+    data.setdefault("gemini", {"tokens": 0, "requests": 0})
+    data.setdefault("groq", {"tokens": 0, "requests": 0})
+    return data
 
 
 def _save_usage(data: Dict[str, Any], quota_file: Optional[pathlib.Path] = None) -> None:
@@ -182,13 +91,17 @@ def extract_or_estimate_tokens(response: Any, prompt_text: str = "") -> int:
     return max(1, total_chars // 4)
 
 
+def provider_from_model_name(model_name: str) -> str:
+    """'groq' para modelos servidos pelo Groq (llama, gpt-oss); qualquer outro conta como 'gemini'."""
+    name = str(model_name or "").lower()
+    return "groq" if ("groq" in name or "llama" in name or "gpt-oss" in name) else "gemini"
+
+
 def detect_provider_from_response(response: Any) -> str:
     """Identifica se a resposta veio do Groq ou do Gemini (padrão 'gemini')."""
     resp_meta = getattr(response, "response_metadata", None)
     if isinstance(resp_meta, dict):
-        model_name = str(resp_meta.get("model_name") or resp_meta.get("model") or "").lower()
-        if "groq" in model_name or "llama" in model_name or "gpt-oss" in model_name:
-            return "groq"
+        return provider_from_model_name(resp_meta.get("model_name") or resp_meta.get("model"))
     return "gemini"
 
 
@@ -200,26 +113,25 @@ def record_llm_usage(
 ) -> Dict[str, Any]:
     """Registra consumo de tokens e requisições do dia atual para o provedor informado."""
     prov = "groq" if (provider or "").lower() == "groq" else "gemini"
-    data = _load_usage(quota_file)
-    entry = data.setdefault(prov, {"tokens": 0, "requests": 0})
-    entry["tokens"] = int(entry.get("tokens", 0)) + max(0, int(tokens))
-    entry["requests"] = int(entry.get("requests", 0)) + max(0, int(requests_count))
-    if prov == "gemini":
-        entry["live_exhausted"] = False
-    _save_usage(data, quota_file)
+    with _LOCK:
+        data = _load_usage(quota_file)
+        entry = data.setdefault(prov, {"tokens": 0, "requests": 0})
+        entry["tokens"] = int(entry.get("tokens", 0)) + max(0, int(tokens))
+        entry["requests"] = int(entry.get("requests", 0)) + max(0, int(requests_count))
+        if prov == "gemini":
+            entry["live_exhausted"] = False
+        else:
+            # O retrato dos headers da última consulta ao vivo ficou velho: vale o contador local, que ela sincronizou
+            entry["live_remaining_requests"] = None
+        _save_usage(data, quota_file)
     return data
 
 
 def reset_daily_quota(quota_file: Optional[pathlib.Path] = None) -> Dict[str, Any]:
     """Zera manualmente os contadores de consumo do dia."""
     data = _default_usage(_today_str())
-    data["manual_reset"] = True
-    if HISTORY_DIR.exists():
-        today_compact = datetime.date.today().strftime("%Y%m%d")
-        data["synced_history_files"] = sorted(
-            f.name for f in HISTORY_DIR.glob(f"{today_compact}_*.md")
-        )
-    _save_usage(data, quota_file)
+    with _LOCK:
+        _save_usage(data, quota_file)
     return data
 
 
@@ -285,7 +197,7 @@ def get_quota_status(quota_file: Optional[pathlib.Path] = None) -> Dict[str, Any
         request_limit=config.GEMINI_DAILY_REQUEST_LIMIT,
         live_exhausted=bool(gem.get("live_exhausted", False)),
         live_status=str(gem.get("live_status", "")),
-        source="histórico + local" if data.get("synced_history_files") else "local",
+        source="local",
     )
 
     # Se Groq tiver cabeçalhos reais de rate-limit consultados na API, usa os limites reais!
@@ -309,7 +221,6 @@ def get_quota_status(quota_file: Optional[pathlib.Path] = None) -> Dict[str, Any
     return {
         "date": data.get("date", _today_str()),
         "last_updated": data.get("last_updated", ""),
-        "synced_history_count": len(data.get("synced_history_files") or []),
         "gemini": gemini_metrics,
         "groq": groq_metrics,
     }
@@ -321,9 +232,10 @@ def probe_live_llm_quotas(quota_file: Optional[pathlib.Path] = None) -> Dict[str
     - Groq: lê os cabeçalhos HTTP oficiais `x-ratelimit-limit-requests` e `x-ratelimit-remaining-requests` (cota real no servidor).
     - Gemini: faz um ping de 1 token na API para verificar se a chave está operacional (200 OK) ou em bloqueio de cota (429 RESOURCE_EXHAUSTED).
     Nota: O Google AI Studio não expõe endpoint REST de saldo numérico de tokens diários; por isso o saldo do Gemini combina
-    a verificação ao vivo (200 vs 429) com os currículos gerados hoje em `history/` e no rastreador local.
+    a verificação ao vivo (200 vs 429) com o rastreador local.
+    As consultas de rede acontecem fora da trava; só a gravação final é feita sob ela.
     """
-    data = _load_usage(quota_file)
+    updates: Dict[str, Dict[str, Any]] = {"gemini": {}, "groq": {}}
     results: Dict[str, Any] = {"gemini": {}, "groq": {}}
 
     # 1. Probe Groq (retorna headers x-ratelimit-* exatos do servidor)
@@ -349,7 +261,7 @@ def probe_live_llm_quotas(quota_file: Optional[pathlib.Path] = None) -> Dict[str
             rem_tok = hdrs.get("x-ratelimit-remaining-tokens")
             rst_req = hdrs.get("x-ratelimit-reset-requests", "")
 
-            grq_entry = data.setdefault("groq", {"tokens": 0, "requests": 0})
+            grq_entry = updates["groq"]
             if lim_req is not None and rem_req is not None:
                 grq_entry["live_limit_requests"] = int(lim_req)
                 grq_entry["live_remaining_requests"] = int(rem_req)
@@ -378,7 +290,7 @@ def probe_live_llm_quotas(quota_file: Optional[pathlib.Path] = None) -> Dict[str
                 json={"contents": [{"parts": [{"text": "ok"}]}]},
                 timeout=(3.0, 5.0),
             )
-            gem_entry = data.setdefault("gemini", {"tokens": 0, "requests": 0})
+            gem_entry = updates["gemini"]
             if resp.status_code == 200:
                 gem_entry["live_exhausted"] = False
                 gem_entry["live_status"] = f"Online na Google (200 OK · modelo {config.GEMINI_MODEL} ativo)"
@@ -393,7 +305,11 @@ def probe_live_llm_quotas(quota_file: Optional[pathlib.Path] = None) -> Dict[str
         except Exception as e:
             results["gemini"] = {"ok": False, "error": str(e)}
 
-    _save_usage(data, quota_file)
+    with _LOCK:
+        data = _load_usage(quota_file)
+        for prov, upd in updates.items():
+            data.setdefault(prov, {"tokens": 0, "requests": 0}).update(upd)
+        _save_usage(data, quota_file)
     return results
 
 

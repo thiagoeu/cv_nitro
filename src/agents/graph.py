@@ -22,7 +22,7 @@ def route_after_review(state: dict) -> str:
     """
     if (
         state.get("reviewer_approved", False)
-        or state.get("stop_reason") in ("no_improvement", "target_reached", "max_attempts")
+        or state.get("stop_reason")  # qualquer motivo de parada encerra o loop
         or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS
     ):
         if state.get("generate_cover_letter", True) is False:

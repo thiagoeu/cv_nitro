@@ -159,12 +159,15 @@ flowchart TD
        - *Integridade de URLs do GitHub:* Cruza todas as URLs do GitHub citadas no currículo gerado contra os repositórios reais obtidos pela API. **Se a IA inventar uma URL de repositório, o Tier 1 reprova imediatamente**.
        - *Validação de Tabela:* Checa a presença da tabela de habilidades.
        - *Score ATS Matemático:* Calcula a cobertura real de tecnologias (50%), keywords (25%) e estrutura (25%) numa escala linear de 0 a 100, sem piso artificial.
-       - *Refinamento Localizado:* Problemas críticos (URL de repositório inventada, marcador `<...>` não preenchido) apontam a seção afetada pelo título no idioma da vaga (ex.: `KEY PROJECTS`), que o `section_patcher` reescreve sem refazer o currículo.
+       - *Refinamento Localizado:* Problemas críticos (URL de repositório inventada, marcador `<...>` não preenchido, pendência técnica atribuída ao candidato) apontam a seção onde o defeito está, pelo título no idioma da vaga (ex.: `KEY PROJECTS`, `RESUMO PROFISSIONAL`), que o `section_patcher` reescreve sem refazer o currículo. Defeito fora de qualquer seção (ex.: título do cargo) leva à regeneração completa no modo estrito.
+       - *Currículo vazio ou truncado:* texto vazio ou saída cortada pelo limite de tokens do modelo também contam como defeito crítico.
     2. **Tier 2 (Auditoria Semântica com LLM):**
        - Só é acionado se passar no Tier 1 e se o usuário tiver optado pelo modo estrito (`strict_review=True`).
-       - Avalia pureza do idioma e alucinações contextuais com saída Pydantic ([ReviewResult](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/nodes.py#L475-L480)).
+       - Recebe a vaga, as tecnologias comprovadas e as pendências técnicas, e avalia pureza do idioma e alucinações contextuais com saída Pydantic (`ReviewResult` em `src/agents/nodes.py`).
+       - A seção que ele indica para refinamento é conferida com os títulos reais do currículo (aceita o nome em PT/EN/ES); se não existir, o currículo é regenerado.
        - Pondera a nota final: `60% determinístico + 40% LLM`.
-  - **Modo Econômico de Execução:** Quando `strict_review=False`, o nó revisa usando unicamente o Tier 1, poupando a chamada do auditor LLM. Se houver um defeito crítico numa seção identificável, faz um único refinamento dessa seção antes de aprovar; o que restar fica registrado no diagnóstico.
+  - **Modo Econômico de Execução:** Quando `strict_review=False`, o nó revisa usando unicamente o Tier 1, poupando a chamada do auditor LLM. Se houver um defeito crítico numa seção identificável, faz um único refinamento dessa seção.
+  - **Defeito crítico remanescente:** em qualquer modo, se a versão final ainda tiver defeito crítico, o currículo é salvo **sem** a marcação de aprovado (`stop_reason = 'critical_issues_remaining'`) e a tela da candidatura mostra um aviso com os defeitos que restaram.
   - **Tolerância a Falhas da API:** Se a API de IA falhar durante a revisão, o nó não bloqueia a execução nem gera loops infinitos: salva o diagnóstico determinístico, registra o erro na lista `errors` do estado e prossegue para salvar o currículo.
 
 ---

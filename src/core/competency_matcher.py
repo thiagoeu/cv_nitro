@@ -1,69 +1,45 @@
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set
 
-# Dicionário canônico de equivalências de mercado.
-# A chave representa o conceito canônico e o conjunto contém variantes legítimas
-# (versões, siglas, dialetos ou subconjuntos diretos).
-CANONICAL_EQUIVALENCES: Dict[str, Set[str]] = {
-    "html": {"html", "html5"},
-    "css": {"css", "css3"},
-    "javascript": {"javascript", "js", "es6", "es2015", "ecmascript"},
-    "typescript": {"typescript", "ts"},
-    "sql": {
-        "sql",
-        "postgresql",
-        "postgres",
-        "mysql",
-        "sqlite",
-        "mariadb",
-        "sql server",
-        "mssql",
-        "tsql",
-        "plsql",
-    },
-    "apis rest": {
-        "apis rest",
-        "api rest",
-        "rest api",
-        "rest apis",
-        "restful",
-        "restful apis",
-        "restful api",
-        "rest",
-    },
-    "inteligencia artificial generativa": {
-        "inteligencia artificial generativa",
-        "ia generativa",
-        "generative ai",
-        "genai",
-        "rag",
-        "retrieval-augmented generation",
-        "llm",
-        "llms",
-        "ollama",
-    },
-    "machine learning": {
-        "machine learning",
-        "ml",
-        "aprendizado de maquina",
-        "scikit-learn",
-    },
-    "docker": {"docker", "docker compose", "container", "containerizacao", "conteinerizacao"},
-    "git": {"git", "github", "gitlab", "github actions"},
-    "rabbitmq": {"rabbitmq", "mensageria", "message broker", "amqp"},
-    "node.js": {"node.js", "nodejs", "node", "nestjs", "express"},
-    "clean code": {"clean code", "codigo limpo", "boas praticas"},
-    "clean architecture": {"clean architecture", "arquitetura limpa"},
-    "solid": {"solid", "principios solid"},
-    "testes automatizados": {
-        "testes automatizados",
-        "testes unitarios",
-        "testes de integracao",
-        "pytest",
-        "jest",
-    },
+# Grafias do mesmo item (versões, siglas, traduções): valem nos dois sentidos.
+ALIASES: List[Set[str]] = [
+    {"html", "html5"},
+    {"css", "css3"},
+    {"javascript", "js", "es6", "es2015", "ecmascript"},
+    {"typescript", "ts"},
+    {"postgresql", "postgres"},
+    {"sql server", "mssql"},
+    {"node.js", "nodejs", "node"},
+    {"go", "golang"},
+    {"apis rest", "api rest", "rest api", "rest apis", "restful", "restful api", "restful apis", "rest"},
+    {"inteligencia artificial generativa", "ia generativa", "generative ai", "genai"},
+    {"rag", "retrieval-augmented generation"},
+    {"llm", "llms"},
+    {"machine learning", "ml", "aprendizado de maquina"},
+    {"mensageria", "message broker"},
+    {"clean code", "codigo limpo"},
+    {"clean architecture", "arquitetura limpa"},
+    {"solid", "principios solid"},
+]
+
+# Genérico -> itens específicos que o comprovam. Vale só nesse sentido:
+# MySQL prova SQL, mas SQL não prova MySQL e MySQL não prova PostgreSQL (irmãos).
+FAMILIES: Dict[str, Set[str]] = {
+    "sql": {"postgresql", "mysql", "sqlite", "mariadb", "sql server", "tsql", "plsql"},
+    "inteligencia artificial generativa": {"rag", "llm", "ollama"},
+    "machine learning": {"scikit-learn"},
+    "docker": {"docker compose"},
+    "git": {"github", "gitlab", "github actions"},
+    "mensageria": {"rabbitmq", "kafka", "amqp"},
+    "node.js": {"nestjs", "express"},
+    "testes automatizados": {"testes unitarios", "testes de integracao", "pytest", "jest"},
 }
+
+# Termos que colidem com palavras comuns ("R&D", "go-live", "the rest of"):
+# exigem a grafia técnica e não podem estar colados a '&' ou '-'.
+AMBIGUOUS_TERMS: Dict[str, str] = {"c": "C", "r": "R", "go": "Go", "rest": "REST", "ts": "TS", "ml": "ML"}
 
 
 def _strip_accents(text: str) -> str:
@@ -77,73 +53,65 @@ def _clean_term(term: str) -> str:
     return _strip_accents((term or "").lower().strip())
 
 
-def _find_canonical_key(term_clean: str) -> Optional[str]:
-    """Identifica se o termo pertence a um grupo canônico de equivalências."""
-    if term_clean in CANONICAL_EQUIVALENCES:
-        return term_clean
-    for canon_key, variants in CANONICAL_EQUIVALENCES.items():
-        if term_clean in variants:
-            return canon_key
-    return None
+def _aliases(term_clean: str) -> Set[str]:
+    for group in ALIASES:
+        if term_clean in group:
+            return group
+    return {term_clean}
 
 
-def _build_term_regex(term_clean: str) -> str:
-    """
-    Constrói regex com limite de palavras adaptada para termos técnicos
-    com símbolos (+, #, ., -), preservando distinções como C vs C++ vs C#.
-    """
-    escaped = re.escape(term_clean)
-    # Se terminar com dígito (ex: html5), permite match sem considerar \b após o dígito
-    return rf"(?<![a-zA-Z0-9]){escaped}(?![a-zA-Z0-9])"
+def _accepted_forms(term_clean: str) -> Set[str]:
+    """Sinônimos do termo e, se ele for genérico, os itens específicos da família (nunca os irmãos)."""
+    forms = set(_aliases(term_clean))
+    for key in list(forms):
+        for member in FAMILIES.get(key, ()):
+            forms |= _aliases(member)
+    return forms
+
+
+@lru_cache(maxsize=None)
+def _form_regex(form: str) -> re.Pattern:
+    """Fronteira de palavra que também separa C de C++/C#; termos ambíguos diferenciam maiúsculas."""
+    if form in AMBIGUOUS_TERMS:
+        return re.compile(rf"(?<![a-zA-Z0-9&-]){re.escape(AMBIGUOUS_TERMS[form])}(?![a-zA-Z0-9+#&-])")
+    return re.compile(rf"(?<![a-zA-Z0-9]){re.escape(form)}(?![a-zA-Z0-9+#])", re.IGNORECASE)
 
 
 def matches_technology(required_tech: str, text: str) -> bool:
     """
     Verifica se uma tecnologia exigida está presente no texto informado,
-    considerando correspondência direta e equivalências canônicas legítimas.
+    considerando sinônimos e, para requisitos genéricos, os itens específicos da família.
     """
     if not required_tech or not text:
         return False
+    plain = _strip_accents(text)
+    return any(_form_regex(form).search(plain) for form in _accepted_forms(_clean_term(required_tech)))
 
-    req_clean = _clean_term(required_tech)
-    text_clean = _clean_term(text)
 
-    # 1. Correspondência direta do termo original
-    direct_pattern = _build_term_regex(req_clean)
-    if re.search(direct_pattern, text_clean):
-        return True
-
-    # 2. Correspondência por grupo de equivalências canônicas
-    canon_key = _find_canonical_key(req_clean)
-    if canon_key:
-        variants = CANONICAL_EQUIVALENCES[canon_key]
-        for variant in variants:
-            var_clean = _clean_term(variant)
-            pattern = _build_term_regex(var_clean)
-            if re.search(pattern, text_clean):
-                return True
-
-    return False
+def candidate_evidence(
+    base_resume: str = "",
+    github_repos: Optional[List[Dict[str, Any]]] = None,
+    readmes: Optional[Dict[str, str]] = None,
+) -> str:
+    """Base de evidências única do candidato: currículo base, repositórios e extratos dos READMEs."""
+    parts = [base_resume or ""]
+    for r in github_repos or []:
+        parts += [r.get("name") or "", r.get("description") or "", r.get("language") or ""]
+    parts += list((readmes or {}).values())
+    return "\n".join(parts)
 
 
 def classify_competencies(
     job_technologies: List[str],
     base_resume: str = "",
     github_repos: Optional[List[Dict[str, Any]]] = None,
+    readmes: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Separa os requisitos da vaga em tecnologias comprovadas (diretas ou equivalentes)
     e pendências técnicas reais (gaps) que o candidato não possui no histórico.
     """
-    github_repos = github_repos or []
-    repo_parts = []
-    for r in github_repos:
-        name = r.get("name") or ""
-        desc = r.get("description") or ""
-        lang = r.get("language") or ""
-        repo_parts.extend([name, desc, lang])
-
-    candidate_corpus = (base_resume or "") + " " + " ".join(repo_parts)
+    candidate_corpus = candidate_evidence(base_resume, github_repos, readmes)
 
     verified: List[str] = []
     gaps: List[str] = []
@@ -169,4 +137,3 @@ def classify_competencies(
         "match_rate": match_rate,
         "total_required": len(seen),
     }
-
