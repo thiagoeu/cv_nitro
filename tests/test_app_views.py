@@ -353,3 +353,54 @@ def test_notify_saved_warns_when_cloud_sync_failed(monkeypatch):
         assert "não foi possível sincronizar" in mock_toast.call_args[0][0]
         notify_saved("supabase:abc", "Salvo!")
         assert mock_toast.call_args[0][0] == "Salvo!"
+
+
+
+def test_settings_view_quota_monitor_bars_and_warning(monkeypatch):
+    from src.core import quota_manager, config
+
+    st.session_state.clear()
+    st.session_state.user_session = {"user_id": "u-quota", "email": "q@test.com", "is_guest": False}
+
+    monkeypatch.setattr(config, "GEMINI_DAILY_TOKEN_LIMIT", 10000)
+    monkeypatch.setattr(config, "GEMINI_DAILY_REQUEST_LIMIT", 100)
+    # Consome 90% da cota do Gemini -> 10% restante (crítico <= 15%)
+    quota_manager.record_llm_usage(provider="gemini", tokens=9000, requests_count=10)
+
+    def fake_button(label, **kwargs):
+        return "Consultar cota GitHub" in label
+
+    with patch("streamlit.markdown"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.expander"), \
+         patch("streamlit.code"), \
+         patch("streamlit.spinner"), \
+         patch("streamlit.rerun"), \
+         patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.progress") as mock_progress, \
+         patch("streamlit.warning") as mock_warning, \
+         patch("src.core.quota_manager.probe_live_llm_quotas", return_value={}), \
+         patch("src.core.quota_manager.fetch_github_rate_limit", return_value={
+             "ok": True,
+             "limit": 5000,
+             "remaining": 4500,
+             "used": 500,
+             "remaining_pct": 90,
+             "reset_time": "15:30",
+         }):
+
+        settings_view.render_settings_view(MagicMock())
+
+        # Deve renderizar barras para Gemini (10% = 0.1), Groq (100% = 1.0) e GitHub (90% = 0.9)
+        assert mock_progress.call_count >= 3
+        progress_values = [call.args[0] for call in mock_progress.call_args_list]
+        assert 0.1 in progress_values
+        assert 1.0 in progress_values
+        assert 0.9 in progress_values
+
+        # Deve emitir alerta preventivo de cota baixa (<= 15%)
+        assert mock_warning.called
+        warning_texts = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
+        assert "10% restante" in warning_texts

@@ -6,10 +6,11 @@ import pytest
 os.environ.setdefault("AUTH_SECRET_KEY", "test-secret-key")
 
 @pytest.fixture(autouse=True)
-def no_llm_fallback(monkeypatch):
+def no_llm_fallback(monkeypatch, tmp_path):
     """Os testes mockam ChatGoogleGenerativeAI; o wrapper de fallback esconderia as chamadas ao mock."""
     monkeypatch.setattr("src.core.config.GEMINI_FALLBACK_MODEL", "")
     monkeypatch.setattr("src.core.config.GROQ_API_KEY", "")
+    monkeypatch.setattr("src.core.quota_manager.QUOTA_FILE", tmp_path / "test_quota_usage.json")
 
 @pytest.fixture(autouse=True)
 def isolate_supabase_in_tests(monkeypatch):

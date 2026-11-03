@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
-from src.core import config
+from src.core import config, quota_manager
 import requests
 import base64
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -121,6 +121,10 @@ def job_analyzer(state: dict) -> dict:
         "Vaga:\n{job_description}"
     )
     result = (prompt | structured_llm).invoke({"job_description": job_description})
+    quota_manager.record_llm_usage(
+        provider=quota_manager.detect_provider_from_response(result),
+        tokens=quota_manager.extract_or_estimate_tokens(result, job_description)
+    )
 
     return {
         "job_keywords": result.keywords,
@@ -534,6 +538,10 @@ REGRAS CRÍTICAS:
         HumanMessage(content=f"--- VAGA ALVO ---\n{job_desc}\n\n--- PORTFÓLIO GITHUB ---\n{portfolio}{feedback_text}")
     ]
     response = _llm(temperature=0.2, thinking_level=None).invoke(messages)
+    quota_manager.record_llm_usage(
+        provider=quota_manager.detect_provider_from_response(response),
+        tokens=quota_manager.extract_or_estimate_tokens(response, f"{system_prompt}\n{base_resume}\n{job_desc}\n{portfolio}")
+    )
     generated_text = _text(response)
     return {
         "generated_resume_md": generated_text,
@@ -791,6 +799,10 @@ def section_patcher(state: dict) -> dict:
             language=L["name"]
         )
         response = _llm(temperature=0.2, thinking_level="low").invoke(formatted_prompt)
+        quota_manager.record_llm_usage(
+            provider=quota_manager.detect_provider_from_response(response),
+            tokens=quota_manager.extract_or_estimate_tokens(response, formatted_prompt)
+        )
         patched_section_md = _text(response)
         updated_resume = splice_markdown_section(current_resume, target_section, patched_section_md)
         return {
@@ -950,6 +962,10 @@ def quality_reviewer(state: dict) -> dict:
             "portfolio_context": _portfolio_context(state, 600),
             "generated": state.get("generated_resume_md", "")
         })
+        quota_manager.record_llm_usage(
+            provider=quota_manager.detect_provider_from_response(result),
+            tokens=quota_manager.extract_or_estimate_tokens(result, generated_md)
+        )
 
         llm_score = getattr(result, "ats_score", diag["ats_score"])
         final_ats_score = int(diag["ats_score"] * 0.6 + llm_score * 0.4)
@@ -1038,6 +1054,10 @@ def cover_letter_generator(state: dict) -> dict:
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
+        quota_manager.record_llm_usage(
+            provider=quota_manager.detect_provider_from_response(response),
+            tokens=quota_manager.extract_or_estimate_tokens(response, f"{system_prompt}\n{user_prompt}")
+        )
         return {
             "generated_cover_letter_md": _text(response),
             "agent_trace": [{

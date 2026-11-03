@@ -13,6 +13,12 @@ GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
+# Orçamentos diários de tokens e requisições para o monitor de cota (padrões do Free Tier)
+GEMINI_DAILY_TOKEN_LIMIT = int(os.getenv("GEMINI_DAILY_TOKEN_LIMIT", "250000"))
+GEMINI_DAILY_REQUEST_LIMIT = int(os.getenv("GEMINI_DAILY_REQUEST_LIMIT", "250"))
+GROQ_DAILY_TOKEN_LIMIT = int(os.getenv("GROQ_DAILY_TOKEN_LIMIT", "200000"))
+GROQ_DAILY_REQUEST_LIMIT = int(os.getenv("GROQ_DAILY_REQUEST_LIMIT", "500"))
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 # Chave anon: usada só para login/cadastro
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
