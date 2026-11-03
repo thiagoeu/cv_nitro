@@ -27,11 +27,15 @@ O sistema SHALL organizar as habilidades técnicas em categorias estruturadas co
 - **THEN** elas são apresentadas em categorias como 'Back-end & Arquitetura', 'Front-end & Mobile', 'Banco de Dados & ORM' e 'DevOps & Ferramentas'.
 
 ### Requirement: Apresentar diagnóstico detalhado de ATS
-O sistema SHALL produzir e exibir um relatório de diagnóstico pós-otimização contendo score de aderência estimado, palavras-chave alinhadas, alterações efetuadas e parecer do revisor de qualidade.
+O sistema SHALL produzir e exibir um relatório de diagnóstico pós-otimização contendo score de aderência estimado, palavras-chave alinhadas, lacunas identificadas, repositórios do GitHub selecionados, orientações para entrevista, rastro de execução dos agentes, alterações efetuadas e parecer do revisor de qualidade.
 
 #### Scenario: Exibição do painel de diagnóstico
 - **WHEN** a otimização de um currículo é finalizada
 - **THEN** o sistema apresenta uma seção de diagnóstico com as métricas de conformidade ATS e justificativas das modificações realizadas
+
+#### Scenario: Exibição de lacunas, portfólio curado e trilha de agentes
+- **WHEN** o painel de diagnóstico ATS é renderizado com dados de lacunas, projetos ranqueados e rastro de execução
+- **THEN** a interface exibe os badges de requisitos ausentes, os repositórios escolhidos com seus scores de relevância, as recomendações de entrevista e a linha do tempo de deliberação dos agentes
 
 ### Requirement: Calcular pontuação de compatibilidade ATS auditável
 O sistema SHALL calcular a pontuação de compatibilidade ATS (de 0 a 100) e o diagnóstico técnico com base na taxa efetiva de cobertura das tecnologias da vaga, presença de palavras-chave conceituais e conformidade dos blocos estruturais do currículo.

@@ -38,5 +38,14 @@ class GraphState(TypedDict):
     patch_instruction: Optional[str]# Instrução direcionada ao section_patcher
     diagnostic: Optional[Dict[str, Any]]
 
+    # Snapshot & Rollback da melhor versão avaliada
+    best_resume_md: Optional[str]
+    best_ats_score: Optional[int]
+    best_diagnostic: Optional[Dict[str, Any]]
+    stop_reason: Optional[str]  # 'target_reached', 'no_improvement', 'max_attempts'
+
+    # Rastro de deliberação e telemetria acumulativo dos agentes
+    agent_trace: Annotated[List[Dict[str, Any]], operator.add]
+
     # Falhas não fatais (revisor, carta) acumuladas para o app avisar o usuário
     errors: Annotated[List[str], operator.add]

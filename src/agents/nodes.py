@@ -1,4 +1,6 @@
 import re
+import datetime
+from concurrent.futures import ThreadPoolExecutor
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
@@ -99,7 +101,15 @@ def job_analyzer(state: dict) -> dict:
     job_description = state.get("job_description", "")
 
     if not job_description:
-        return {"job_keywords": [], "job_technologies": [], "job_language": "pt", "job_summary": ""}
+        return {
+            "job_keywords": [], "job_technologies": [], "job_language": "pt", "job_summary": "",
+            "agent_trace": [{
+                "agent": "job_analyzer",
+                "step": "Análise de Vaga",
+                "detail": "Descrição da vaga vazia recebida.",
+                "status": "warning"
+            }]
+        }
 
     structured_llm = _llm(temperature=0).with_structured_output(JobAnalysis)
     prompt = PromptTemplate.from_template(
@@ -116,7 +126,13 @@ def job_analyzer(state: dict) -> dict:
         "job_keywords": result.keywords,
         "job_technologies": result.technologies,
         "job_language": result.language,
-        "job_summary": result.summary
+        "job_summary": result.summary,
+        "agent_trace": [{
+            "agent": "job_analyzer",
+            "step": "Análise de Requisitos e Idioma",
+            "detail": f"Detectado idioma '{result.language}'. Identificadas {len(result.technologies)} tecnologias e {len(result.keywords)} palavras-chave ATS.",
+            "status": "success"
+        }]
     }
 
 def _job_context(state: dict) -> str:
@@ -219,17 +235,43 @@ def github_fetcher(state: dict) -> dict:
     Repositórios já presentes no estado (cache do perfil) são reaproveitados sem chamar a API.
     """
     if state.get("raw_github_repos"):
-        return {"raw_github_repos": state["raw_github_repos"]}
+        cached_count = len(state["raw_github_repos"])
+        return {
+            "raw_github_repos": state["raw_github_repos"],
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": f"Reaproveitados {cached_count} repositórios do cache do perfil sem chamadas à API.",
+                "status": "info"
+            }]
+        }
 
     username = (state.get("github_username") or "").strip()
     if not username:
-        return {"raw_github_repos": []}
+        return {
+            "raw_github_repos": [],
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": "Nenhum usuário do GitHub informado. Etapa de portfólio ignorada.",
+                "status": "info"
+            }]
+        }
 
     # Validação de segurança do nome de usuário do GitHub
     if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", username):
         msg = f"Nome de usuário GitHub inválido ou potencialmente inseguro: '{username}'."
         print(msg)
-        return {"raw_github_repos": [], "errors": [msg]}
+        return {
+            "raw_github_repos": [],
+            "errors": [msg],
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": msg,
+                "status": "error"
+            }]
+        }
 
     repos_url = f"https://api.github.com/users/{username}/repos?type=public&sort=updated&per_page=100"
 
@@ -238,28 +280,89 @@ def github_fetcher(state: dict) -> dict:
         if response.status_code == 403:
             msg = "Limite de requisições da API do GitHub atingido (HTTP 403). Configure GITHUB_TOKEN no .env."
             print(msg)
-            return {"raw_github_repos": [], "errors": [msg]}
+            return {
+                "raw_github_repos": [],
+                "errors": [msg],
+                "agent_trace": [{
+                    "agent": "github_fetcher",
+                    "step": "Coleta de Repositórios GitHub",
+                    "detail": msg,
+                    "status": "warning"
+                }]
+            }
         elif response.status_code == 404:
             msg = f"Usuário '{username}' não foi encontrado no GitHub (HTTP 404)."
             print(msg)
-            return {"raw_github_repos": [], "errors": [msg]}
+            return {
+                "raw_github_repos": [],
+                "errors": [msg],
+                "agent_trace": [{
+                    "agent": "github_fetcher",
+                    "step": "Coleta de Repositórios GitHub",
+                    "detail": msg,
+                    "status": "warning"
+                }]
+            }
         elif response.status_code != 200:
             msg = f"Falha ao acessar GitHub para '{username}' (HTTP {response.status_code})."
             print(msg)
-            return {"raw_github_repos": [], "errors": [msg]}
+            return {
+                "raw_github_repos": [],
+                "errors": [msg],
+                "agent_trace": [{
+                    "agent": "github_fetcher",
+                    "step": "Coleta de Repositórios GitHub",
+                    "detail": msg,
+                    "status": "warning"
+                }]
+            }
 
         repos = response.json()
         if not isinstance(repos, list):
-            return {"raw_github_repos": []}
-        return {"raw_github_repos": repos}
+            return {
+                "raw_github_repos": [],
+                "agent_trace": [{
+                    "agent": "github_fetcher",
+                    "step": "Coleta de Repositórios GitHub",
+                    "detail": "Resposta inesperada da API do GitHub (não retornou lista).",
+                    "status": "warning"
+                }]
+            }
+        return {
+            "raw_github_repos": repos,
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": f"Consultados {len(repos)} repositórios públicos de '{username}'.",
+                "status": "success"
+            }]
+        }
     except requests.exceptions.Timeout:
         msg = "Tempo limite esgotado ao conectar à API do GitHub."
         print(msg)
-        return {"raw_github_repos": [], "errors": [msg]}
+        return {
+            "raw_github_repos": [],
+            "errors": [msg],
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": msg,
+                "status": "warning"
+            }]
+        }
     except Exception as e:
         msg = f"Erro no GitHub Fetcher: {e}"
         print(msg)
-        return {"raw_github_repos": [], "errors": [msg]}
+        return {
+            "raw_github_repos": [],
+            "errors": [msg],
+            "agent_trace": [{
+                "agent": "github_fetcher",
+                "step": "Coleta de Repositórios GitHub",
+                "detail": msg,
+                "status": "error"
+            }]
+        }
 
 def relevance_ranker(state: dict) -> dict:
     """
@@ -272,7 +375,16 @@ def relevance_ranker(state: dict) -> dict:
     technologies = state.get("job_technologies", []) or []
 
     if not raw_repos or not username:
-        return {"github_repos": [], "github_readmes": {}}
+        return {
+            "github_repos": [],
+            "github_readmes": {},
+            "agent_trace": [{
+                "agent": "relevance_ranker",
+                "step": "Curadoria e Ranqueamento de Repositórios",
+                "detail": "Nenhum repositório disponível para ranqueamento.",
+                "status": "info"
+            }]
+        }
 
     # Prioriza repositórios autorais (não-forks); se todos forem forks, mantém como fallback
     non_forks = [r for r in raw_repos if not r.get("fork", False)]
@@ -297,24 +409,39 @@ def relevance_ranker(state: dict) -> dict:
             "relevance_score": score
         })
 
-    readmes = {}
-    for repo in selected_repos:
-        repo_name = repo["name"]
+    def fetch_readme(repo_info: dict) -> tuple[str, str]:
+        repo_name = repo_info["name"]
         if not repo_name or not re.match(r"^[a-zA-Z0-9_.-]+$", repo_name):
-            continue
+            return repo_name, ""
         readme_url = f"https://api.github.com/repos/{username}/{repo_name}/readme"
         try:
             readme_resp = requests.get(readme_url, headers=_github_headers(), timeout=GITHUB_TIMEOUT)
             if readme_resp.status_code == 200:
                 content_b64 = readme_resp.json().get("content", "")
                 content_str = base64.b64decode(content_b64).decode("utf-8", errors="replace")
-                readmes[repo_name] = _clean_readme(content_str, max_chars=1200)
+                return repo_name, _clean_readme(content_str, max_chars=1200)
         except Exception as e:
             print(f"Erro ao baixar README de {repo_name}: {e}")
+        return repo_name, ""
 
+    readmes = {}
+    if selected_repos:
+        with ThreadPoolExecutor(max_workers=min(3, len(selected_repos))) as executor:
+            results = executor.map(fetch_readme, selected_repos)
+            for repo_name, cleaned_readme in results:
+                if cleaned_readme:
+                    readmes[repo_name] = cleaned_readme
+
+    top_names = ", ".join(r["name"] for r in selected_repos)
     return {
         "github_repos": selected_repos,
-        "github_readmes": readmes
+        "github_readmes": readmes,
+        "agent_trace": [{
+            "agent": "relevance_ranker",
+            "step": "Curadoria Concorrente de Portfólio",
+            "detail": f"Selecionados Top {len(selected_repos)} repositórios ({top_names}) com READMEs obtidos concorrentemente.",
+            "status": "success"
+        }]
     }
 
 def _portfolio_context(state: dict, readme_chars: int = 1200) -> str:
@@ -407,7 +534,16 @@ REGRAS CRÍTICAS:
         HumanMessage(content=f"--- VAGA ALVO ---\n{job_desc}\n\n--- PORTFÓLIO GITHUB ---\n{portfolio}{feedback_text}")
     ]
     response = _llm(temperature=0.2, thinking_level=None).invoke(messages)
-    return {"generated_resume_md": _text(response)}
+    generated_text = _text(response)
+    return {
+        "generated_resume_md": generated_text,
+        "agent_trace": [{
+            "agent": "resume_generator",
+            "step": "Redação Executiva ATS",
+            "detail": f"Currículo gerado integralmente em {L['name']} com tabela de habilidades e verbos em 1ª pessoa.",
+            "status": "success"
+        }]
+    }
 
 def _term_in_text(term: str, text_lower: str) -> bool:
     """Verifica presença de termo técnico respeitando limites de palavras sem falso positivo."""
@@ -496,6 +632,18 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
             seen.add(m.lower())
             unique_matched.append(m)
 
+    # Identificação determinística de lacunas técnicas e conceituais (Gaps reais da vaga)
+    matched_techs_lower = {t.lower() for t in matched_techs}
+    matched_kws_lower = {k.lower() for k in matched_kws}
+    missing_techs = [t for t in job_technologies if t.lower() not in matched_techs_lower]
+    missing_kws = [k for k in job_keywords if k.lower() not in matched_kws_lower]
+    missing_keywords = []
+    missing_seen = set()
+    for m in (missing_techs + missing_kws):
+        if m.lower() not in missing_seen and m.lower() not in seen:
+            missing_seen.add(m.lower())
+            missing_keywords.append(m)
+
     tech_rate = len(matched_techs) / max(len(job_technologies), 1)
     keyword_rate = len(matched_kws) / max(len(job_keywords), 1)
     structural_penalties = (len(critical_issues) * 0.25) + (0.20 if not has_table else 0.0)
@@ -511,10 +659,40 @@ def _validate_resume_deterministic(generated_md: str, state: dict) -> tuple[bool
         "Experiências reescritas com foco em impacto e verbos de ação"
     ]
 
+    # Repositórios curados pelo relevance_ranker com seus scores
+    curated_repos = []
+    for r in state.get("github_repos", []) or []:
+        curated_repos.append({
+            "name": r.get("name", ""),
+            "language": r.get("language", ""),
+            "url": r.get("url", ""),
+            "relevance_score": r.get("relevance_score", 0.0)
+        })
+
+    # Roteiro determinístico de preparação para entrevista baseado nos gaps e projetos
+    deterministic_interview_tips = []
+    if missing_keywords:
+        top_missing = ", ".join(missing_keywords[:4])
+        deterministic_interview_tips.append(
+            f"Como abordar requisitos em aberto: Esteja preparado para demonstrar capacidade de aprendizado rápido nas tecnologias não evidenciadas no currículo ({top_missing}), citando fundamentos sólidos em stacks correlatas."
+        )
+    if curated_repos:
+        repo_names = ", ".join(r["name"] for r in curated_repos[:2] if r["name"])
+        deterministic_interview_tips.append(
+            f"Projetos a destacar na entrevista: Use como exemplos práticos os projetos {repo_names}, detalhando as decisões arquiteturais e resolução de problemas técnicos."
+        )
+    if not deterministic_interview_tips:
+        deterministic_interview_tips.append(
+            "Conexão técnica: Destaque sua trajetória enfatizando resultados mensuráveis e o impacto direto gerado nas experiências anteriores."
+        )
+
     is_valid = len(critical_issues) == 0
     diagnostic_data = {
         "ats_score": ats_score,
         "matched_keywords": unique_matched,
+        "missing_keywords": missing_keywords,
+        "curated_repos": curated_repos,
+        "interview_tips": deterministic_interview_tips,
         "applied_changes": applied_changes,
         "tech_coverage": round(tech_rate * 100),
         "keyword_coverage": round(keyword_rate * 100),
@@ -535,6 +713,10 @@ class ReviewResult(BaseModel):
     target_section: Optional[str] = Field(
         default=None,
         description="Nome da seção específica a ser corrigida se severity for 'minor' (ex: 'HABILIDADES TÉCNICAS', 'PROJETOS EM DESTAQUE', 'RESUMO PROFISSIONAL', 'TECHNICAL SKILLS', 'KEY PROJECTS')."
+    )
+    interview_tips: List[str] = Field(
+        default_factory=list,
+        description="Orientações e pontos de atenção estratégicos para a entrevista técnica do candidato com base nos requisitos da vaga."
     )
 
 def splice_markdown_section(full_markdown: str, target_section_title: str, new_section_content: str) -> str:
@@ -602,64 +784,143 @@ def section_patcher(state: dict) -> dict:
     )
 
     try:
-        response = _llm(temperature=0.2, thinking_level="low").invoke(
-            prompt.format(
-                target_section=target_section,
-                instruction=instruction,
-                current_resume=current_resume,
-                language=L["name"]
-            )
+        formatted_prompt = prompt.format(
+            target_section=target_section,
+            instruction=instruction,
+            current_resume=current_resume,
+            language=L["name"]
         )
+        response = _llm(temperature=0.2, thinking_level="low").invoke(formatted_prompt)
         patched_section_md = _text(response)
         updated_resume = splice_markdown_section(current_resume, target_section, patched_section_md)
-        return {"generated_resume_md": updated_resume}
+        return {
+            "generated_resume_md": updated_resume,
+            "agent_trace": [{
+                "agent": "section_patcher",
+                "step": "Refinamento Cirúrgico de Seção",
+                "detail": f"Seção '{target_section}' reescrita cirurgicamente e reenxertada sem refazer o currículo inteiro.",
+                "status": "success"
+            }]
+        }
     except Exception as e:
         print(f"Erro no section_patcher: {e}")
-        return {"generated_resume_md": current_resume, "errors": [f"Falha no patch cirúrgico: {e}"]}
+        return {
+            "generated_resume_md": current_resume,
+            "errors": [f"Falha no patch cirúrgico: {e}"],
+            "agent_trace": [{
+                "agent": "section_patcher",
+                "step": "Refinamento Cirúrgico de Seção",
+                "detail": f"Falha no patch cirúrgico: {e}",
+                "status": "error"
+            }]
+        }
 
 def quality_reviewer(state: dict) -> dict:
     """
     Revisa o currículo gerado combinando validação determinística Tier 1 (0 tokens)
     com auditoria semântica Tier 2 via LLM para máxima qualidade e eficiência de tokens.
     Classifica falhas em 'minor' (para section_patcher) ou 'major' (para regeneração completa).
+    Implementa Snapshot & Rollback da melhor versão avaliada e parada por estagnação.
     """
     attempts = state.get("review_attempts", 0)
     generated_md = state.get("generated_resume_md", "") or ""
     L = LABELS.get(state.get("job_language") or "pt", LABELS["pt"])
     strict = state.get("strict_review", True)
 
+    best_resume = state.get("best_resume_md")
+    best_score = state.get("best_ats_score")
+    best_diag = state.get("best_diagnostic")
+
     # Validação determinística preliminar (Tier 1 - zero tokens)
     is_valid, critical_issues, diag = _validate_resume_deterministic(generated_md, state)
 
-    def verdict(approved: bool, feedback: str, severity: str, section: Optional[str] = None) -> dict:
+    def build_result_payload(approved: bool, feedback: str, severity: str, final_score: int,
+                             applied: list, tips: list, target_sec: Optional[str] = None) -> dict:
+        diagnostic_payload = {
+            "ats_score": final_score,
+            "matched_keywords": diag["matched_keywords"],
+            "missing_keywords": diag["missing_keywords"],
+            "curated_repos": diag["curated_repos"],
+            "interview_tips": tips or diag["interview_tips"],
+            "applied_changes": applied or diag["applied_changes"],
+            "reviewer_summary": feedback
+        }
+
+        # Gestão de Snapshot da melhor versão válida
+        nonlocal best_resume, best_score, best_diag
+        updated_best = False
+        if is_valid:
+            if best_score is None or final_score > best_score:
+                best_resume = generated_md
+                best_score = final_score
+                best_diag = diagnostic_payload
+                updated_best = True
+
+        # Critério de parada por estagnação: se não melhorou em relação à melhor versão anterior
+        stop_reason = None
+        current_md = generated_md
+        effective_diag = diagnostic_payload
+
+        if approved:
+            stop_reason = "target_reached"
+        elif attempts > 0 and not updated_best and best_resume is not None:
+            # Estagnação de nota: parar para não forçar alucinações e restaurar melhor versão
+            stop_reason = "no_improvement"
+            current_md = best_resume
+            effective_diag = best_diag or diagnostic_payload
+            feedback = f"Revisão interrompida por estagnação da pontuação ATS. A melhor versão ({best_score}%) foi restaurada automaticamente."
+            severity = "approved"
+            approved = True
+        elif attempts + 1 >= MAX_REVIEW_ATTEMPTS:
+            stop_reason = "max_attempts"
+            if best_resume is not None:
+                current_md = best_resume
+                effective_diag = best_diag or diagnostic_payload
+            severity = "approved"
+
+        trace_status = "success" if approved else ("warning" if severity == "minor" else "error")
+        trace_entry = {
+            "agent": "quality_reviewer",
+            "step": f"Auditoria de Qualidade ATS (Tentativa {attempts + 1})",
+            "detail": f"Score ATS: {final_score}%. Parecer: {feedback} (Severidade: {severity}).",
+            "status": trace_status
+        }
+        if stop_reason == "no_improvement":
+            trace_entry["detail"] += " Restauração automática de snapshot aplicada."
+
         return {
+            "generated_resume_md": current_md,
             "reviewer_approved": approved,
             "reviewer_feedback": feedback,
             "review_attempts": attempts + 1,
             "review_severity": severity,
-            "patch_section": section,
-            "patch_instruction": None if approved else feedback,
-            "diagnostic": {
-                "ats_score": diag["ats_score"],
-                "matched_keywords": diag["matched_keywords"],
-                "applied_changes": diag["applied_changes"],
-                "reviewer_summary": feedback
-            }
+            "patch_section": target_sec if not approved else None,
+            "patch_instruction": feedback if not approved else None,
+            "best_resume_md": best_resume,
+            "best_ats_score": best_score,
+            "best_diagnostic": best_diag,
+            "stop_reason": stop_reason,
+            "diagnostic": effective_diag,
+            "agent_trace": [trace_entry]
         }
 
     if not is_valid:
         feedback_det = "Ajustes necessários no currículo: " + "; ".join(critical_issues) + "."
         target_sec = _critical_patch_section(generated_md, critical_issues, L)
         if strict:
-            return verdict(False, feedback_det, "minor" if target_sec else "major", target_sec)
+            return build_result_payload(False, feedback_det, "minor" if target_sec else "major",
+                                        diag["ats_score"], diag["applied_changes"], diag["interview_tips"], target_sec)
         # Modo econômico: um único refinamento da seção afetada, sem revisor LLM nem reescrita completa
         if target_sec and attempts == 0:
-            return verdict(False, feedback_det, "minor", target_sec)
-        return verdict(True, f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}.", "approved")
+            return build_result_payload(False, feedback_det, "minor", diag["ats_score"],
+                                        diag["applied_changes"], diag["interview_tips"], target_sec)
+        return build_result_payload(True, f"Aprovado em modo econômico com avisos: {'; '.join(critical_issues)}.",
+                                    "approved", diag["ats_score"], diag["applied_changes"], diag["interview_tips"])
 
     # Modo econômico (strict_review=False): utiliza apenas o diagnóstico determinístico
     if not strict:
-        return verdict(True, "Aprovado em modo econômico com validação estrutural determinística.", "approved")
+        return build_result_payload(True, "Aprovado em modo econômico com validação estrutural determinística.",
+                                    "approved", diag["ats_score"], diag["applied_changes"], diag["interview_tips"])
 
     # Tier 2: Auditoria semântica fina com LLM apenas se passou no Tier 1
     try:
@@ -675,6 +936,7 @@ def quality_reviewer(state: dict) -> dict:
             "Avalie a qualidade ATS:\n"
             "- Atribua um ats_score de 0 a 100 baseado na fidelidade, clareza e densidade das keywords.\n"
             "- Liste em applied_changes de 3 a 5 adequações realizadas em relação ao currículo base.\n"
+            "- Forneça em interview_tips de 2 a 3 orientações para entrevista técnica sobre como defender os requisitos da vaga e destacar os projetos reais.\n"
             "- Classifique severity em 'approved' (aprovado), 'minor' (problema pontual em 1 seção específica) ou 'major' (alucinação grave/reescrita total).\n"
             "- Se severity for 'minor', indique em target_section exatamente qual seção deve ser corrigida (ex.: 'HABILIDADES TÉCNICAS', 'PROJETOS EM DESTAQUE', 'RESUMO PROFISSIONAL').\n\n"
             "--- CURRÍCULO BASE ---\n{base_resume}\n\n"
@@ -692,24 +954,20 @@ def quality_reviewer(state: dict) -> dict:
         llm_score = getattr(result, "ats_score", diag["ats_score"])
         final_ats_score = int(diag["ats_score"] * 0.6 + llm_score * 0.4)
         applied_changes = getattr(result, "applied_changes", []) or diag["applied_changes"]
+        interview_tips = getattr(result, "interview_tips", []) or diag["interview_tips"]
 
         severity = getattr(result, "severity", "approved" if result.approved else "major")
         target_section = getattr(result, "target_section", None) if not result.approved else None
 
-        return {
-            "reviewer_approved": result.approved,
-            "reviewer_feedback": result.feedback,
-            "review_attempts": attempts + 1,
-            "review_severity": severity,
-            "patch_section": target_section,
-            "patch_instruction": result.feedback if not result.approved else None,
-            "diagnostic": {
-                "ats_score": final_ats_score,
-                "matched_keywords": diag["matched_keywords"],
-                "applied_changes": applied_changes,
-                "reviewer_summary": result.feedback if result.approved else f"Ajuste sugerido: {result.feedback}"
-            }
-        }
+        return build_result_payload(
+            result.approved,
+            result.feedback if result.approved else f"Ajuste sugerido: {result.feedback}",
+            severity,
+            final_ats_score,
+            applied_changes,
+            interview_tips,
+            target_section
+        )
     except Exception as e:
         print(f"Erro no Quality Reviewer: {e}")
         return {
@@ -723,9 +981,18 @@ def quality_reviewer(state: dict) -> dict:
             "diagnostic": {
                 "ats_score": diag["ats_score"],
                 "matched_keywords": diag["matched_keywords"],
+                "missing_keywords": diag["missing_keywords"],
+                "curated_repos": diag["curated_repos"],
+                "interview_tips": diag["interview_tips"],
                 "applied_changes": diag["applied_changes"],
                 "reviewer_summary": f"Auditoria automática não pôde ser concluída ({e})."
-            }
+            },
+            "agent_trace": [{
+                "agent": "quality_reviewer",
+                "step": "Auditoria de Qualidade ATS",
+                "detail": f"Falha na API de auditoria ({e}). O currículo prosseguiu com avaliação determinística.",
+                "status": "warning"
+            }]
         }
 
 def cover_letter_generator(state: dict) -> dict:
@@ -771,10 +1038,24 @@ def cover_letter_generator(state: dict) -> dict:
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
-        return {"generated_cover_letter_md": _text(response)}
+        return {
+            "generated_cover_letter_md": _text(response),
+            "agent_trace": [{
+                "agent": "cover_letter_generator",
+                "step": "Redação da Carta de Apresentação",
+                "detail": f"Carta de apresentação em 4 atos estruturada em {lang_name} com base nos projetos do portfólio.",
+                "status": "success"
+            }]
+        }
     except Exception as e:
         print(f"Erro no Cover Letter Generator: {e}")
         return {
             "generated_cover_letter_md": "",
-            "errors": [f"Carta de apresentação não foi gerada ({e})."]
+            "errors": [f"Carta de apresentação não foi gerada ({e})."],
+            "agent_trace": [{
+                "agent": "cover_letter_generator",
+                "step": "Redação da Carta de Apresentação",
+                "detail": f"Carta não gerada devido a falha na API ({e}).",
+                "status": "warning"
+            }]
         }

@@ -183,16 +183,21 @@ flowchart TD
 
 ---
 
-### Arestas Condicionais e Circuit Breaker
+### Arestas Condicionais, Snapshot & Rollback e Circuit Breaker
 
-A função de roteamento [route_after_review](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/graph.py#L12-L22) implementa uma máquina de decisão inteligente:
+A função de roteamento [route_after_review](file:///c:/Users/Thiago/Desktop/Faculdade/sistemas-multi-agentes/cv_nitro/src/agents/graph.py#L14-L37) implementa uma máquina de decisão inteligente e tolerante a estagnação:
 
-1. **Reprovação com Tentativas Restantes (`tentativas < 2`):**
-   - O fluxo retorna para o `resume_generator`, injetando o feedback explicativo do revisor para correção direcionada.
-2. **Aprovação OU Limite de Tentativas Esgotado (`MAX_REVIEW_ATTEMPTS = 2`):**
+1. **Snapshot da Melhor Versão & Rollback Automático:**
+   - Durante as rodadas de avaliação, o `quality_reviewer` preserva um snapshot da versão com maior pontuação ATS válida (`best_resume_md`, `best_ats_score`, `best_diagnostic`).
+   - Se uma revisão subsequente **não superar a nota anterior**, o sistema diagnostica que a diferença decorre de uma lacuna real na base do candidato (e não de defeito de redação), encerra imediatamente novas rodadas (`stop_reason = 'no_improvement'`) para não forçar a IA a inventar dados e restaura a melhor versão já obtida.
+2. **Reprovação com Tentativas Restantes (`tentativas < 2`):**
+   - Se a falha for pontual (`minor`) e houver seção alvo identificada (`patch_section`), aciona o `section_patcher` (Delta Patching cirúrgico).
+   - Se a falha for estrutural ou grave (`major`), retorna ao `resume_generator` para reescrita completa.
+3. **Aprovação OU Limite de Tentativas Esgotado (`MAX_REVIEW_ATTEMPTS = 2`):**
    - Se o usuário desmarcou a carta (`generate_cover_letter=False`), o fluxo segue diretamente para `END`.
    - Se a carta estiver ativa, segue para `cover_letter_generator` e em seguida finaliza em `END`.
-3. **Mecanismo *Circuit Breaker*:** Garante que o grafo nunca entre em loops infinitos de regeneração, limitando estritamente a 2 rodadas.
+4. **Mecanismo *Circuit Breaker*:** Garante que o grafo nunca entre em loops infinitos de regeneração, limitando estritamente a 2 rodadas.
+5. **Observabilidade e Telemetria (`agent_trace`):** Cada nó e decisão de roteamento emite um evento no estado compartilhado, exibido interativamente no painel de diagnóstico como uma linha do tempo completa da deliberação dos agentes.
 
 ---
 
@@ -253,6 +258,7 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
 ### 7. Configurações & Diagnóstico do Sistema
 - Verificação do status de conexão com o banco de dados (Supabase Nuvem vs. Local).
 - Validação das chaves de API (`GEMINI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`).
+- **Monitor de Cota & Capacidade de Tokens (Hoje):** Acompanhamento visual com barras de progresso (`st.progress`) da porcentagem disponível de tokens e requisições diárias para Google Gemini e Groq Fallback, estimativa de quantas otimizações completas ainda cabem no dia antes de risco de erro HTTP 429, consulta ao vivo aos limites da API do GitHub (`/rate_limit`) e teste ativo das chaves de IA.
 - Identificação dos modelos ativos e orientações para prevenção de limites de cota.
 
 ---

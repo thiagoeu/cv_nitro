@@ -14,11 +14,16 @@ from src.agents.nodes import (
 def route_after_review(state: dict) -> str:
     """
     Decide o roteamento após a auditoria de qualidade:
-    - Se aprovado ou excedeu o limite de tentativas: encerra (END) ou gera a cover letter.
+    - Se aprovado, se estagnou sem melhora ('no_improvement') ou se excedeu tentativas:
+      encerra (END) ou gera a cover letter.
     - Se rejeitado com severidade 'minor' e seção alvo identificada: aciona 'section_patcher'.
     - Se rejeitado com severidade 'major': aciona regeneração completa via 'resume_generator'.
     """
-    if state.get("reviewer_approved", False) or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS:
+    if (
+        state.get("reviewer_approved", False)
+        or state.get("stop_reason") in ("no_improvement", "target_reached", "max_attempts")
+        or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS
+    ):
         if state.get("generate_cover_letter", True) is False:
             return END
         return "cover_letter_generator"

@@ -15,7 +15,12 @@ def test_graph_state():
         review_attempts=0,
         generate_cover_letter=True,
         strict_review=True,
-        diagnostic={"ats_score": 85, "matched_keywords": ["python"]}
+        diagnostic={"ats_score": 85, "matched_keywords": ["python"]},
+        best_resume_md=None,
+        best_ats_score=None,
+        best_diagnostic=None,
+        stop_reason=None,
+        agent_trace=[]
     )
     
     print("State creation successful.")
@@ -25,6 +30,8 @@ def test_graph_state():
     assert state['generate_cover_letter'] is True
     assert state['strict_review'] is True
     assert state['diagnostic']['ats_score'] == 85
+    assert state['agent_trace'] == []
+    assert state['best_resume_md'] is None
 
 if __name__ == "__main__":
     test_graph_state()

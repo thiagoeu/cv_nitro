@@ -353,4 +353,6 @@ def test_github_fetcher_reuses_cached_repos():
     with patch("requests.get") as mock_get:
         res = github_fetcher({"github_username": "octocat", "raw_github_repos": cached})
     assert not mock_get.called
-    assert res == {"raw_github_repos": cached}
+    assert res["raw_github_repos"] == cached
+    assert "agent_trace" in res
+    assert res["agent_trace"][0]["agent"] == "github_fetcher"

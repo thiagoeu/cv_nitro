@@ -30,6 +30,15 @@ def test_route_after_review_with_cover_letter_disabled():
     }
     assert route_after_review(state_enabled) == "cover_letter_generator"
 
+    # Caso interrupção por estagnação (stop_reason='no_improvement')
+    state_stagnated = {
+        "reviewer_approved": False,
+        "stop_reason": "no_improvement",
+        "review_attempts": 1,
+        "generate_cover_letter": True
+    }
+    assert route_after_review(state_stagnated) == "cover_letter_generator"
+
 def test_quality_reviewer_economic_mode():
     # Modo econômico (strict_review=False) não deve chamar a LLM e deve aprovar com diagnóstico
     state = GraphState(

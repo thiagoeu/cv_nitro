@@ -41,7 +41,12 @@ def build_initial_state(
         reviewer_approved=False,
         review_attempts=0,
         generate_cover_letter=generate_cover_letter,
-        strict_review=strict_review
+        strict_review=strict_review,
+        best_resume_md=None,
+        best_ats_score=None,
+        best_diagnostic=None,
+        stop_reason=None,
+        agent_trace=[]
     )
     profile = profile or {}
     same_user = (github_username or "").strip().lower() == (profile.get("github_username") or "").strip().lower()
@@ -87,10 +92,14 @@ def run_pipeline_with_status(graph, inputs: dict, label: str) -> dict:
 
 def save_pipeline_result(final_state: dict, job_title: str, job_url: str, job_description: str,
                          base_resume: str, github_username: str, user_id: str) -> str:
-    """Salva a candidatura gerada; avisos não fatais da execução ficam no diagnóstico (visíveis ao reabrir)."""
+    """Salva a candidatura gerada; avisos não fatais, rastro e telemetria da execução ficam no diagnóstico (visíveis ao reabrir)."""
     diagnostic = dict(final_state.get("diagnostic") or {})
     if final_state.get("errors"):
         diagnostic["run_warnings"] = list(final_state["errors"])
+    if final_state.get("agent_trace"):
+        diagnostic["agent_trace"] = list(final_state["agent_trace"])
+    if final_state.get("stop_reason"):
+        diagnostic["stop_reason"] = final_state["stop_reason"]
     return history_manager.save_resume(
         job_title=job_title,
         content=final_state.get("generated_resume_md") or "",
