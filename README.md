@@ -127,27 +127,30 @@ flowchart TD
   - **Fan-out Concorrente:** O `github_fetcher` lista os repositórios (até 100, uma requisição) em paralelo com o `job_analyzer`; o `relevance_ranker` junta os dois resultados.
   - **Cache do Perfil:** Se o usuário do GitHub da otimização for o mesmo salvo no Perfil, a lista em cache é reaproveitada e a API de listagem nem é chamada.
   - **Filtragem Anti-Fork:** Repositórios que são forks de outros criadores são penalizados ou descartados, priorizando trabalhos autorais.
-  - **Algoritmo de Relevância Ponderada ([_score_repository](src/agents/nodes/github.py)):**
+  - **Algoritmo de Relevância Ponderada & Diversidade MMR ([`_score_repository_with_matches`](src/agents/nodes/github.py)):**
+    - `+4.5` se o nome do repositório contiver a tecnologia (normalizando hífens/underscores, ex.: `react-native-decibelimetro`);
     - `+4.0` se a linguagem principal coincidir com a stack da vaga;
-    - `+2.5` por tópico/tag correspondente;
-    - `+1.5` por ocorrência de tecnologias na descrição (usando regex com limites de palavra `\b` para evitar falsos positivos como `"c"` em `"react"` ou `"go"` em `"google"`);
-    - Bônus incremental por estrelas (*stargazers*).
-  - **Higienização de README ([_clean_readme](src/agents/nodes/github.py)):** Remove badges markdown, tags HTML, seções triviais de licença e comandos de instalação, preservando apenas o extrato técnico da arquitetura (limitado a 1.200 caracteres).
+    - `+3.5` por tópico/tag correspondente (com normalização e equivalências semânticas);
+    - `+1.5` por ocorrência de tecnologias na descrição (usando regex com limites de palavra para evitar falsos positivos);
+    - `+6.0` de bônus prioritário para tecnologias presentes diretamente no título do cargo (`job_title`);
+    - **Seleção Gulosa por Diversidade (*Maximal Marginal Relevance - MMR*):** Concede bônus por tecnologias inéditas ainda não cobertas pelos repositórios já escolhidos (`+3.0` por tecnologia da vaga e `+8.0` por tecnologia do título), garantindo que vagas híbridas/Full Stack (ex.: *Node.js + React Native*) tragam projetos representativos de todos os pilares (Backend, Mobile e Frontend) em vez de 3 repositórios repetidos da mesma stack.
+  - **Higienização de README ([`_clean_readme`](src/agents/nodes/github.py)):** Remove badges markdown, tags HTML, seções triviais de licença e comandos de instalação, preservando apenas o extrato técnico da arquitetura (limitado a 1.200 caracteres).
   - **Validação de Segurança:** Regex de segurança sobre o nome de usuário do GitHub para proteção contra injeções.
 
 ---
 
 #### 🧭 3. Competency Matcher (`competency_matcher`)
-* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py) (regras em [src/core/competency_matcher.py](src/core/competency_matcher.py))
-* **Papel:** Trava factual do pipeline: separa os requisitos da vaga em **tecnologias comprovadas** e **pendências técnicas** (lacunas) antes de qualquer redação.
-* **Importância:** É o que impede o currículo de afirmar uma tecnologia que o candidato não tem. As lacunas são proibidas no currículo, verificadas pelo revisor e entregues à carta, que só pode citá-las como interesse em aprender.
+* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py) (regras e fallback em [src/core/competency_matcher.py](src/core/competency_matcher.py))
+* **Papel:** Trava factual e auditor semântico do pipeline: separa os requisitos da vaga em **tecnologias comprovadas** e **pendências técnicas** (lacunas) antes de qualquer redação.
+* **Importância:** Impede o currículo de afirmar uma tecnologia que o candidato não possui, ao mesmo tempo em que evita falsos negativos por variações de nomenclatura. As lacunas são proibidas no currículo, verificadas pelo revisor e entregues à carta apenas como interesse em aprender.
 * **Principais Escolhas Técnicas & Motivações:**
-  - **Determinístico (0 tokens de LLM):** O mesmo texto gera sempre o mesmo resultado, que pode ser testado e auditado. Usar um LLM para vigiar a alucinação de outro LLM seria circular.
-  - **Base de Evidências Única:** Currículo base + nome, descrição e linguagem dos repositórios selecionados + extratos dos READMEs. É a mesma evidência que o gerador recebe, então tudo o que o gerador pode usar conta como comprovado.
-  - **Equivalências Direcionais:**
-    - *Sinônimos* valem nos dois sentidos (`Postgres` = `PostgreSQL`, `golang` = `Go`, `RESTful` = `APIs REST`).
-    - *Famílias* valem só do específico para o genérico: `MySQL` comprova `SQL`, mas **não** comprova `PostgreSQL`; `pytest` comprova "testes automatizados", mas não `Jest`.
-    - Tecnologias fora do dicionário casam pela grafia literal: o dicionário não precisa listar tudo, só as variantes. Quando falta um mapeamento, o erro é conservador (vira lacuna, nunca alucinação).
+  - **Arquitetura Híbrida (Agente Semântico LLM + Motor Determinístico):**
+    - **Modo Estrito (`strict_review=True`):** Aciona um **Agente Semântico Fundamentado (*Grounded Semantic Matcher*)** com saída estruturada Pydantic ([`CompetencyAudit`](src/agents/nodes/analysis.py)), capaz de correlacionar ferramentas, frameworks e ecossistemas reais do perfil (ex.: `Expo` comprova `React Native`; `NestJS`/`Express` comprovam `Node.js`; `Prisma`/`TypeORM` comprovam `SQL`), mantendo trava factual estrita para jamais inventar tecnologias ausentes (ex.: `Java` sem evidência vai obrigatoriamente para `unmatched_gaps`).
+    - **Modo Econômico (`strict_review=False`) e Fallback Resiliente:** Executa o classificador determinístico canônico (0 tokens de LLM), garantindo disponibilidade contínua mesmo sem cota de API.
+  - **Base de Evidências Única:** Currículo base + nome, tópicos, descrição e linguagem dos repositórios + extratos dos READMEs. É a mesma base de evidências fornecida ao gerador.
+  - **Equivalências Direcionais Canônicas ([`competency_matcher.py`](src/core/competency_matcher.py)):**
+    - *Sinônimos (`ALIASES`):* Valem nos dois sentidos (`Postgres` = `PostgreSQL`, `React Native` = `react-native`, `Next.js` = `nextjs`, `RESTful` = `APIs REST`).
+    - *Famílias (`FAMILIES`):* Valem só do específico para o genérico (`Expo` comprova `React Native`; `MySQL` comprova `SQL`, mas **não** comprova `PostgreSQL`; `pytest` comprova "testes automatizados", mas não `Jest`).
   - **Termos Curtos e Ambíguos:** `C`, `R`, `Go`, `REST`, `TS` e `ML` exigem a grafia técnica e não casam com `C#`, `C++`, `R&D`, `go-live` ou "the rest of".
 
 ---
@@ -259,7 +262,7 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
 - **Etapa 3 (Preferências de IA & Tokens):**
   - Toggle *Gerar Carta de Apresentação* (liga/desliga).
   - Toggle *Auditoria Rígida de Qualidade* (liga auditoria semântica ou ativa modo econômico ultra-rápido).
-- **Monitor Visual:** Barra de progresso com status de cada agente durante a execução do grafo.
+- **Monitor Visual & Proteção de Execução:** Barra de progresso em tempo real com status formatado de cada agente, **bloqueio automático do botão de disparo** (`disabled=True`) para impedir chamadas concorrentes/duplicadas e **alerta visual de retenção** orientando o usuário a não recarregar a página (`F5`) durante o processamento.
 
 ### 4. Painel de Diagnóstico ATS (O "Raio-X")
 - **Score ATS Auditável:** Nota de 0 a 100 (linear) calculada com base na cobertura de tecnologias, palavras-chave e estrutura.
@@ -274,7 +277,7 @@ A aplicação cobre integralmente o ciclo de vida da otimização de currículos
   - 📑 **Folha Formatada (A4):** Diagramação profissional em CSS pronta para impressão ou exportação para PDF (`Ctrl + P`).
   - 📄 **Markdown Puro:** Código pronto para copiar ou usar em plataformas digitais.
   - ✉️ **Carta de Apresentação:** Texto persuasivo estruturado para envio ao recrutador.
-- **Re-otimizador Inteligente:** Ajuste a descrição da vaga ou o currículo e dispare uma nova rodada sem recomeçar do zero.
+- **Re-otimizador Inteligente com Trava de Execução:** Ajuste a descrição da vaga ou o currículo e dispare uma nova rodada sem recomeçar do zero, contando com desativação automática dos botões de disparo/fechamento, alerta contra `F5` e recuperação resiliente via bloco `try ... finally`.
 
 ### 6. Dashboard Executivo & Métricas de Mercado
 - **Cards Analíticos:** Total de candidaturas, Score ATS médio, proporção de idiomas (PT/EN/ES) e volume de stacks identificadas.
@@ -313,11 +316,12 @@ Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (
 | Estratégia | Onde Atua | Benefício Real |
 | :--- | :--- | :--- |
 | **Resumo da Vaga (`job_context`)** | `job_analyzer` | Reduz o texto da vaga em até 85%, cortando ruídos de RH de todas as etapas seguintes. |
-| **Curadoria Determinística de Repositórios** | `github_fetcher` + `relevance_ranker` | **0 tokens consumidos** para busca, filtro anti-fork, ranqueamento e higienização de READMEs. |
-| **Mapeamento de Competências** | `competency_matcher` | **0 tokens consumidos** para separar tecnologias comprovadas e lacunas. |
+| **Curadoria Determinística & MMR de Portfólio** | `github_fetcher` + `relevance_ranker` | **0 tokens consumidos** para busca, filtro anti-fork, seleção diversificada MMR e higienização de READMEs. |
+| **Mapeamento Híbrido de Competências** | `competency_matcher` | Auditoria semântica via LLM no modo estrito e **0 tokens consumidos** no modo econômico/fallback determinístico. |
 | **Auditoria Determinística Tier 1** | `quality_reviewer` | **0 tokens consumidos** para checar links falsos, placeholders e calcular a cobertura ATS. |
-| **Modo Econômico de Revisão** | Toggle no Wizard | Pula a auditoria semântica do Tier 2, economizando ~35% dos tokens com resposta imediata. |
+| **Modo Econômico de Revisão** | Toggle no Wizard | Pula a auditoria semântica do Tier 2 e do `competency_matcher`, economizando ~35% dos tokens com resposta imediata. |
 | **Toggle de Cover Letter** | Toggle no Wizard | Evita uma chamada de IA pesada caso a vaga não exija carta de apresentação (-40% de tokens). |
+| **Bloqueio de Submissão Concorrente** | `wizard_view` + `applications_view` | Desabilita botões de geração/re-otimização e alerta contra `F5`, evitando disparos duplicados e desperdício de cota. |
 | **Reserva Automática Groq** | `chat_model` (fallback) | Evita bloqueios por estouro de cota (429) do tier gratuito do Gemini. |
 
 ---
