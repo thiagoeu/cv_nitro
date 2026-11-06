@@ -312,6 +312,42 @@ def test_wizard_view_streaming_exception_handling():
         assert "wizard_errors" in st.session_state
         assert any("Erro durante a execução do grafo" in err for err in st.session_state.wizard_errors)
         assert mock_rerun.called
+        assert st.session_state.wizard_is_generating is False
+
+
+def test_wizard_view_submit_disabled_and_warning_shown_when_generating():
+    st.session_state.clear()
+    st.session_state.user_session = {
+        "user_id": "usr-wizard-gen",
+        "email": "dev@test.com",
+        "is_guest": False
+    }
+    st.session_state.wizard_is_generating = True
+
+    button_kwargs = {}
+    def fake_button(label, **kwargs):
+        button_kwargs["label"] = label
+        button_kwargs.update(kwargs)
+        return False
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.warning") as mock_warning, \
+         patch("streamlit.text_input", return_value=""), \
+         patch("streamlit.text_area", return_value=""), \
+         patch("src.ui.components.resume_input", return_value=""), \
+         patch("src.core.profile_manager.get_user_profile", return_value={}), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"):
+
+        wizard_view.render_wizard_view(graph=MagicMock())
+
+        assert button_kwargs.get("disabled") is True
+        assert "Otimizando currículo com agentes..." in button_kwargs.get("label", "")
+        assert mock_warning.called
+        warning_msg = mock_warning.call_args[0][0]
+        assert "não atualize a página (F5)" in warning_msg
 
 
 
@@ -404,3 +440,114 @@ def test_settings_view_quota_monitor_bars_and_warning(monkeypatch):
         assert mock_warning.called
         warning_texts = " ".join(str(c.args[0]) for c in mock_warning.call_args_list)
         assert "10% restante" in warning_texts
+
+
+def test_application_view_reoptimization_disabled_and_warning_shown():
+    st.session_state.clear()
+    st.session_state.user_session = {"user_id": "usr-reopt", "email": "dev@test.com", "is_guest": False}
+    st.session_state["show_rerun_history/app1.md"] = True
+    st.session_state.reopt_is_generating = True
+
+    sample_app = {
+        "metadata": {
+            "job_title": "Backend Engineer",
+            "date": "2026-10-21T10:00:00Z"
+        },
+        "resume_md": "# Original",
+        "diagnostic": {}
+    }
+
+    buttons_captured = {}
+    def fake_button(label, **kwargs):
+        buttons_captured[kwargs.get("key", label)] = {
+            "label": label,
+            "disabled": kwargs.get("disabled", False)
+        }
+        return False
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.warning") as mock_warning, \
+         patch("streamlit.text_input", return_value="Dev"), \
+         patch("streamlit.text_area", return_value="Desc"), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.tabs", return_value=[MagicMock(), MagicMock(), MagicMock(), MagicMock()]), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.header"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.space"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"):
+
+        applications_view.render_application_view(
+            filepath="history/app1.md",
+            get_cached_application_fn=MagicMock(return_value=sample_app),
+            clear_history_cache_cb=MagicMock(),
+            graph=MagicMock()
+        )
+
+        # Verifica botão de execução desabilitado e com rótulo alternado
+        exec_btn = buttons_captured.get("btn_run_rerun_history/app1.md")
+        assert exec_btn is not None
+        assert exec_btn["disabled"] is True
+        assert "Re-otimizando com agentes..." in exec_btn["label"]
+
+        # Verifica botão de toggle desabilitado
+        toggle_btn = buttons_captured.get("btn_toggle_rerun_history/app1.md")
+        assert toggle_btn is not None
+        assert toggle_btn["disabled"] is True
+
+        # Verifica aviso de retenção contra F5
+        assert mock_warning.called
+        assert any("não atualize a página (F5)" in str(c.args[0]) for c in mock_warning.call_args_list)
+
+
+def test_application_view_reoptimization_exception_resets_flag():
+    st.session_state.clear()
+    st.session_state.user_session = {"user_id": "usr-reopt-err", "email": "dev@test.com", "is_guest": False}
+    st.session_state["show_rerun_history/app1.md"] = True
+
+    sample_app = {
+        "metadata": {
+            "job_title": "Backend Engineer",
+            "job_description": "Vaga",
+            "base_resume": "Base",
+            "date": "2026-10-21T10:00:00Z"
+        },
+        "resume_md": "# Original",
+        "diagnostic": {}
+    }
+
+    mock_graph = MagicMock()
+    mock_graph.stream.side_effect = RuntimeError("Falha no LLM cluster")
+
+    def fake_button(label, **kwargs):
+        return "Executar re-otimização" in label
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.text_input", return_value="Dev"), \
+         patch("streamlit.text_area", return_value="Desc"), \
+         patch("src.core.profile_manager.get_user_profile", return_value={}), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.status"), \
+         patch("streamlit.empty"), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.header"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.space"), \
+         patch("streamlit.tabs", return_value=[MagicMock(), MagicMock(), MagicMock(), MagicMock()]), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.error") as mock_error, \
+         patch("streamlit.rerun") as mock_rerun:
+
+        applications_view.render_application_view(
+            filepath="history/app1.md",
+            get_cached_application_fn=MagicMock(return_value=sample_app),
+            clear_history_cache_cb=MagicMock(),
+            graph=mock_graph
+        )
+
+        assert mock_error.called
+        assert "Erro durante a re-otimização" in mock_error.call_args[0][0]
+        assert st.session_state.reopt_is_generating is False
+        assert mock_rerun.called

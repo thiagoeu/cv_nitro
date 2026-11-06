@@ -9,6 +9,8 @@ TRANSIENT_KEYS = [
     "transient_info",
     "transient_success",
     "wizard_errors",
+    "wizard_is_generating",
+    "reopt_is_generating",
     "auth_error",
     "auth_success",
     "search_error",
