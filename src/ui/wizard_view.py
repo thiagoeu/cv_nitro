@@ -9,6 +9,7 @@ NODE_STATUS_LABELS = {
     "job_analyzer": "🎯 Análise da vaga e extração de requisitos concluída",
     "github_fetcher": "🐙 Repositórios públicos consultados no GitHub",
     "relevance_ranker": "⚡ Ranqueamento determinístico de relevância do portfólio",
+    "competency_matcher": "🧭 Mapeamento semântico de competências e lacunas concluído",
     "resume_generator": "✍️ Redação executiva do currículo de alta fidelidade",
     "section_patcher": "🩹 Refinamento cirúrgico de seção concluído",
     "quality_reviewer": "🔍 Auditoria de qualidade e conformidade ATS",
@@ -176,9 +177,25 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
         for err in st.session_state.wizard_errors:
             st.error(err, icon=":material/error:")
 
-    submit = st.button("Gerar currículo otimizado e diagnóstico ATS", type="primary", icon=":material/rocket_launch:", width="stretch", key="wizard_submit_btn")
+    is_generating = bool(st.session_state.get("wizard_is_generating", False))
 
-    if submit:
+    if is_generating:
+        st.warning(
+            "⏳ **Processando candidatura com múltiplos agentes...** "
+            "Por favor, aguarde a finalização e **não atualize a página (F5) nem saia desta tela** para não interromper a geração.",
+            icon=":material/hourglass_top:"
+        )
+
+    submit = st.button(
+        "Otimizando currículo com agentes..." if is_generating else "Gerar currículo otimizado e diagnóstico ATS",
+        type="primary",
+        icon=":material/hourglass_top:" if is_generating else ":material/rocket_launch:",
+        width="stretch",
+        disabled=is_generating,
+        key="wizard_submit_btn"
+    )
+
+    if submit and not is_generating:
         # Purgar erros prévios
         clear_transient_state()
 
@@ -195,19 +212,25 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
             st.rerun()
             return
 
+        st.session_state.wizard_is_generating = True
+        st.warning(
+            "⏳ **Processando candidatura com múltiplos agentes...** "
+            "Por favor, aguarde a finalização e **não atualize a página (F5) nem saia desta tela** para não interromper a geração.",
+            icon=":material/hourglass_top:"
+        )
+
         initial_state = build_initial_state(job_desc, base_resume, github_user, job_url, gen_cover, strict_rev, user_prof)
 
         try:
             final_state = run_pipeline_with_status(graph, initial_state, "Executando pipeline multi-agente em tempo real...")
+            saved_path = save_pipeline_result(final_state, job_title.strip(), job_url, job_desc, base_resume, github_user, current_uid)
+            if clear_history_cache_cb:
+                clear_history_cache_cb()
+            notify_saved(saved_path, "Currículo otimizado salvo!")
+            st.session_state.viewing_history = saved_path
+            set_page("applications", clear_transient=False)
         except Exception as e:
             st.session_state.wizard_errors = [f"Erro durante a execução do grafo: {e}"]
+        finally:
+            st.session_state.wizard_is_generating = False
             st.rerun()
-            return
-
-        saved_path = save_pipeline_result(final_state, job_title.strip(), job_url, job_desc, base_resume, github_user, current_uid)
-        if clear_history_cache_cb:
-            clear_history_cache_cb()
-        notify_saved(saved_path, "Currículo otimizado salvo!")
-        st.session_state.viewing_history = saved_path
-        set_page("applications", clear_transient=False)
-        st.rerun()
