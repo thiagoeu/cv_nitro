@@ -467,3 +467,29 @@ def test_cover_letter_knows_gaps_and_flags_placeholders():
     assert "Kubernetes" in sent.split("PENDÊNCIAS TÉCNICAS")[1]
     assert "<Nome da empresa>" in out["generated_cover_letter_md"]
     assert out["errors"] and "<Nome da empresa>" in out["errors"][0]
+
+
+def test_relevance_ranker_diverse_pillars_and_react_native():
+    from src.agents.nodes.github import relevance_ranker
+
+    repos = [
+        {"name": "farmacia-popular", "language": "TypeScript", "topics": ["docker", "nestjs", "postgresql"], "fork": False, "html_url": "https://github.com/u/farmacia-popular"},
+        {"name": "MicroServicesSales", "language": "TypeScript", "topics": ["docker", "nestjs", "microservices"], "fork": False, "html_url": "https://github.com/u/MicroServicesSales"},
+        {"name": "base-system-NestJS-React", "language": "TypeScript", "topics": ["nestjs", "boilerplate"], "fork": False, "html_url": "https://github.com/u/base-system-NestJS-React"},
+        {"name": "react-native-decibelimetro", "language": "JavaScript", "topics": ["react-native", "expo", "mobile"], "fork": False, "html_url": "https://github.com/u/react-native-decibelimetro", "description": "SoundTracker em React Native"},
+    ]
+
+    state = {
+        "raw_github_repos": repos,
+        "github_username": "u",
+        "job_technologies": ["Node.js", "TypeScript", "React Native", "PostgreSQL", "Docker"],
+        "job_title": "Desenvolvedor Full Stack - Node.js + React Native"
+    }
+
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 404
+        result = relevance_ranker(state)
+
+    selected_names = [r["name"] for r in result["github_repos"]]
+    assert "react-native-decibelimetro" in selected_names
+    assert "farmacia-popular" in selected_names

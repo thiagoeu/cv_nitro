@@ -22,6 +22,12 @@ ALIASES: List[Set[str]] = [
     {"clean code", "codigo limpo"},
     {"clean architecture", "arquitetura limpa"},
     {"solid", "principios solid"},
+    {"react native", "react-native", "reactnative"},
+    {"next.js", "nextjs", "next-js", "next"},
+    {"vue.js", "vuejs", "vue-js", "vue"},
+    {"tailwind css", "tailwindcss", "tailwind-css", "tailwind"},
+    {"express", "expressjs", "express.js"},
+    {"fastapi", "fast-api"},
 ]
 
 # Genérico -> itens específicos que o comprovam. Vale só nesse sentido:
@@ -34,6 +40,7 @@ FAMILIES: Dict[str, Set[str]] = {
     "git": {"github", "gitlab", "github actions"},
     "mensageria": {"rabbitmq", "kafka", "amqp"},
     "node.js": {"nestjs", "express"},
+    "react native": {"expo"},
     "testes automatizados": {"testes unitarios", "testes de integracao", "pytest", "jest"},
 }
 
