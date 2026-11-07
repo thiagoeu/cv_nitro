@@ -1,10 +1,12 @@
 """Agentes de análise: requisitos da vaga e mapeamento de competências comprovadas."""
 import os
 from typing import List, Literal
-from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 from src.agents.shared import llm
+from src.agents.shared.context import job_context
+from src.agents.prompts.analysis_prompts import JOB_ANALYZER_PROMPT, COMPETENCY_PROMPT
 from src.core import competency_matcher as competency_matcher_core
+
 
 class JobAnalysis(BaseModel):
     keywords: List[str] = Field(description="Principais palavras-chave, soft-skills e conceitos importantes da vaga.")
@@ -15,6 +17,16 @@ class JobAnalysis(BaseModel):
         "cargo e senioridade, responsabilidades, requisitos obrigatórios e desejáveis. Exclua texto institucional genérico, "
         "benefícios, declarações de diversidade e textos da interface do site."
     ))
+
+
+class CompetencyAudit(BaseModel):
+    verified_technologies: List[str] = Field(
+        description="Tecnologias exigidas pela vaga que o candidato comprovadamente domina (seja por citação direta ou por frameworks/ecossistemas correlatos, ex.: Expo comprova React Native, NestJS comprova Node.js, Postgres comprova SQL)."
+    )
+    unmatched_gaps: List[str] = Field(
+        description="Tecnologias exigidas pela vaga que NÃO possuem respaldo no currículo base nem nos repositórios do GitHub do candidato (gaps reais, ex.: Java se não houver Java em nenhum lugar)."
+    )
+    reasoning: str = Field(description="Explicação concisa do cruzamento semântico.")
 
 
 def job_analyzer(state: dict) -> dict:
@@ -36,15 +48,11 @@ def job_analyzer(state: dict) -> dict:
         }
 
     structured_llm = llm.chat_model(temperature=0).with_structured_output(JobAnalysis)
-    prompt = PromptTemplate.from_template(
-        "Você é um recrutador especialista. Analise a seguinte vaga de emprego "
-        "e extraia as principais tecnologias, palavras-chave comportamentais/conceituais "
-        "e identifique o idioma em que a vaga está escrita. Ignore textos de interface do site "
-        "de vagas (ex.: 'Sobre a vaga', 'Candidatar-se') ao decidir o idioma. "
-        "Escreva também um resumo enxuto da vaga, que substituirá o texto original nas próximas etapas.\n\n"
-        "Vaga:\n{job_description}"
+    result = llm.invoke_tracked(
+        JOB_ANALYZER_PROMPT | structured_llm,
+        {"job_description": job_description},
+        job_description,
     )
-    result = llm.invoke_tracked(prompt | structured_llm, {"job_description": job_description}, job_description)
 
     return {
         "job_keywords": result.keywords,
@@ -58,45 +66,6 @@ def job_analyzer(state: dict) -> dict:
             "status": "success"
         }]
     }
-
-
-def job_context(state: dict) -> str:
-    """Resumo da vaga + termos ATS no lugar do texto colado: corta boilerplate (benefícios, institucional) de cada chamada seguinte."""
-    summary = state.get("job_summary")
-    if not summary:
-        return state.get("job_description", "")
-    terms = ", ".join(dict.fromkeys((state.get("job_technologies") or []) + (state.get("job_keywords") or [])))
-    return f"{summary}\n\nPalavras-chave ATS: {terms}"
-
-
-class CompetencyAudit(BaseModel):
-    verified_technologies: List[str] = Field(
-        description="Tecnologias exigidas pela vaga que o candidato comprovadamente domina (seja por citação direta ou por frameworks/ecossistemas correlatos, ex.: Expo comprova React Native, NestJS comprova Node.js, Postgres comprova SQL)."
-    )
-    unmatched_gaps: List[str] = Field(
-        description="Tecnologias exigidas pela vaga que NÃO possuem respaldo no currículo base nem nos repositórios do GitHub do candidato (gaps reais, ex.: Java se não houver Java em nenhum lugar)."
-    )
-    reasoning: str = Field(description="Explicação concisa do cruzamento semântico.")
-
-
-COMPETENCY_PROMPT = PromptTemplate.from_template(
-    "Você é um especialista em auditoria técnica de competências e compatibilidade de vagas de tecnologia.\n"
-    "Sua missão é cruzar as tecnologias exigidas pela vaga com o perfil real do candidato (currículo base e portfólio no GitHub) "
-    "e classificar com inteligência semântica e honestidade estrita:\n\n"
-    "DIRETRIZES DE AUDITORIA:\n"
-    "1. **Reconhecimento Semântico Amplo:** Reconheça ferramentas, frameworks, ecossistemas e sinônimos legítimos de mercado. "
-    "Por exemplo: Expo comprova React Native; NestJS e Express comprovam Node.js; PostgreSQL, MySQL e SQLite comprovam SQL; "
-    "TypeORM e Prisma comprovam ORM/bancos relacionais; Docker Compose comprova Docker; RAG, Ollama e LLMs comprovam IA Generativa; etc.\n"
-    "2. **HONESTIDADE E TRAVA FACTUAL (NÃO INVENTE):** Se o candidato NÃO possui experiência nem projetos com a tecnologia "
-    "(ex.: Java, C#, Flutter, Kubernetes) e ela não é respaldada por nenhuma ferramenta equivalente do perfil, "
-    "coloque-a OBRIGATORIAMENTE em 'unmatched_gaps'. Jamais suponha competências sem evidência textual ou prática!\n\n"
-    "--- VAGA ALVO ---\n"
-    "Cargo: {job_title}\n"
-    "Tecnologias exigidas: {job_technologies}\n\n"
-    "--- CURRÍCULO BASE DO CANDIDATO ---\n{base_resume}\n\n"
-    "--- REPOSITÓRIOS GITHUB DO CANDIDATO ---\n{github_repos_summary}\n\n"
-    "Retorne a análise estruturada."
-)
 
 
 def competency_matcher(state: dict) -> dict:
@@ -187,7 +156,6 @@ def competency_matcher(state: dict) -> dict:
             if t not in verified and t not in gaps:
                 gaps.append(t)
 
-        reasoning = getattr(audit_res, "reasoning", "")
         detail = (
             f"Auditoria semântica via Agente LLM: {len(verified)} tecnologias comprovadas e "
             f"{len(gaps)} pendências técnicas reais."
