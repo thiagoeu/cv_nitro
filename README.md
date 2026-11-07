@@ -356,32 +356,48 @@ cv_nitro/
 │   ├── agents/
 │   │   ├── graph.py            # Definição do StateGraph, nós, arestas e roteamento cíclico
 │   │   ├── state.py            # Definição do estado global compartilhado (GraphState)
-│   │   ├── nodes/              # Agentes (nós do grafo), um arquivo por responsabilidade
+│   │   ├── nodes/              # Agentes (nós do grafo), enxutos e sem acoplamento cruzado
 │   │   │   ├── analysis.py     # job_analyzer (requisitos da vaga) e competency_matcher (comprovadas x lacunas)
-│   │   │   ├── github.py       # github_fetcher, relevance_ranker e extratos dos READMEs
+│   │   │   ├── github.py       # github_fetcher e relevance_ranker (curadoria MMR e download concorrente de READMEs)
 │   │   │   ├── writer.py       # resume_generator, section_patcher e cover_letter_generator
-│   │   │   └── reviewer.py     # validação determinística (Tier 1) e quality_reviewer (Tier 2)
-│   │   └── shared/             # O que os agentes compartilham
+│   │   │   └── reviewer.py     # quality_reviewer (auditoria LLM Tier 2 e gestão de snapshots)
+│   │   ├── prompts/            # Subpacote de templates de prompts isolados da lógica de execução
+│   │   │   ├── analysis_prompts.py # JOB_ANALYZER_PROMPT e COMPETENCY_PROMPT
+│   │   │   ├── writer_prompts.py   # Prompts de currículo canônico ATS, patch de seção e carta de apresentação
+│   │   │   └── reviewer_prompts.py # QUALITY_REVIEWER_PROMPT (auditoria semântica Tier 2)
+│   │   └── shared/             # Utilitários, clientes, contexto e validadores compartilhados pelos agentes
+│   │       ├── context.py      # Formatadores de contexto do GraphState (job_context, portfolio_context, etc.)
+│   │       ├── deterministic_validator.py # Validador determinístico Tier 1, score ATS e dicas de entrevista
+│   │       ├── github_scoring.py # Cálculo determinístico de relevância de repositórios e limpeza de READMEs
 │   │       ├── llm.py          # Cliente Gemini com reservas, invocação com registro de cota, leitura da resposta
 │   │       └── sections.py     # Rótulos por idioma, seções do Markdown, marcadores e troca de seção
 │   │
 │   ├── core/
+│   │   ├── formatting/         # Subpacote de formatação e parsing de currículos
+│   │   │   ├── styles.py       # Folha de estilo CSS A4 (@media print e modo compacto) e template HTML
+│   │   │   ├── markdown_parser.py # Parser e serializador estruturado para o editor de layout travado
+│   │   │   └── html_renderer.py# Conversor Markdown -> HTML A4 com sanitização XSS
+│   │   ├── storage/            # Subpacote de persistência local e normalização de datas
+│   │   │   ├── date_utils.py   # Parsing de fuso horário, ordenação e formatação amigável de datas
+│   │   │   └── local_store.py  # Leitura e serialização de candidaturas em arquivos Markdown locais
 │   │   ├── auth_manager.py     # Gerenciamento de autenticação e sessões (Supabase Auth / Guest)
-│   │   ├── competency_matcher.py # Regras de equivalência e classificação comprovadas x lacunas
+│   │   ├── competency_matcher.py # Auditoria híbrida (LLM + determinística) de competências comprovadas x lacunas
 │   │   ├── config.py           # Carregamento e validação de configurações e variáveis de ambiente
 │   │   ├── db_migrator.py      # Migrações e sincronização de esquemas de banco de dados
 │   │   ├── document_parser.py  # Extrator de arquivos PDF, DOCX, TXT e Markdown
-│   │   ├── history_manager.py  # Persistência híbrida (Supabase Cloud + Fallback Local)
+│   │   ├── history_manager.py  # Orquestrador de persistência híbrida (Supabase Cloud + Fallback Local)
 │   │   ├── profile_manager.py  # Gerenciamento de perfis de candidatos persistentes
 │   │   ├── quota_manager.py    # Monitor de cota diária de tokens e requisições por provedor
-│   │   └── resume_formatter.py # Conversor de Markdown para visualização diagramada em folha A4
+│   │   └── resume_formatter.py # Fachada pública de formatação A4 e parsing de currículos
 │   │
 │   └── ui/
-│       ├── navbar.py           # Barra de navegação superior com alternador de temas e controle de sessão
-│       ├── components.py       # Componentes visuais reutilizáveis, cabeçalhos e sincronização
+│       ├── theme.py            # Tokens de paleta visual, CSS global e rodapé institucional
+│       ├── navbar.py           # Barra de navegação superior com controle de sessão e rotas
+│       ├── components.py       # Componentes visuais interativos reutilizáveis e sincronização de sessão
 │       ├── wizard_view.py      # Assistente de otimização em 3 etapas
 │       ├── dashboard_view.py   # Painel com métricas consolidadas e gráficos
-│       ├── applications_view.py# Central de candidaturas com busca e visualizador em 4 abas
+│       ├── applications_view.py# Controlador da central de candidaturas, busca e painel de re-otimização
+│       ├── application_tabs.py # Abas especializadas (visualização A4, editor estruturado/Markdown e carta)
 │       ├── diagnostic_view.py  # Componente visual para renderização do Raio-X ATS
 │       ├── profile_view.py     # Tela de gerenciamento do perfil do usuário
 │       ├── settings_view.py    # Monitor de integridade do sistema e chaves de API

@@ -147,3 +147,62 @@ Mais de 6 anos de experiência em engenharia de software e microsserviços.
     assert "### Tech Lead & AI Engineer" in serialized
     assert "## RESUMO PROFISSIONAL\nResumo atualizado com liderança técnica." in serialized
     assert "## HABILIDADES TÉCNICAS" in serialized
+
+
+def test_decoupled_subpackages_and_facades():
+    """Garante que os submódulos desacoplados e suas fachadas públicas expõem os mesmos contratos."""
+    from src.core.formatting import (
+        build_a4_html_document,
+        format_resume_to_html as fmt_html,
+        parse_resume_markdown as parse_md,
+        serialize_resume_markdown as serialize_md,
+    )
+    from src.core.storage import (
+        format_display_date,
+        read_local_application,
+        serialize_local_application,
+    )
+    from src.agents.shared.deterministic_validator import (
+        _validate_resume_deterministic,
+        _critical_patch_section,
+    )
+    from src.agents.shared.context import (
+        job_context,
+        portfolio_context,
+        format_repos_summary,
+        resolve_verified_and_gaps,
+    )
+    from src.agents.shared.github_scoring import (
+        _score_repository,
+        _clean_readme,
+    )
+    from src.agents.prompts import (
+        JOB_ANALYZER_PROMPT,
+        COMPETENCY_PROMPT,
+        build_resume_system_prompt,
+        SECTION_PATCH_PROMPT,
+        QUALITY_REVIEWER_PROMPT,
+    )
+    from src.ui.theme import THEME_TOKENS, apply_theme, render_footer
+
+    assert callable(build_a4_html_document)
+    assert fmt_html is format_resume_to_html
+    assert callable(parse_md) and callable(serialize_md)
+    assert format_display_date("2026-11-07T14:30:00") == "07/11/2026 14:30"
+    raw = serialize_local_application({"job_title": "Eng"}, "# Nome", "Carta")
+    assert "<!-- COVER_LETTER -->" in raw
+    assert read_local_application("")["resume_md"] == ""
+    assert _critical_patch_section([("erro", "## RESUMO PROFISSIONAL")]) == "## RESUMO PROFISSIONAL"
+    is_valid, issues, diag = _validate_resume_deterministic("# Nome\n## HABILIDADES\n| Cat | Tech |\n| :--- | :--- |\n| Back | Python |", {"job_technologies": ["Python"]})
+    assert is_valid is True and diag["ats_score"] > 0
+    assert "Python" in job_context({"job_summary": "Resumo", "job_technologies": ["Python"]})
+    assert portfolio_context({"github_repos": []}) == ""
+    assert "Nenhum" in format_repos_summary([])
+    assert resolve_verified_and_gaps({"verified_technologies": ["Go"], "unmatched_gaps": ["Java"]}) == (["Go"], ["Java"])
+    assert _score_repository({"name": "api-go", "language": "Go"}, ["Go"]) > 0
+    assert _clean_readme("# Titulo\nTexto") == "# Titulo\nTexto"
+    assert JOB_ANALYZER_PROMPT is not None and COMPETENCY_PROMPT is not None
+    assert SECTION_PATCH_PROMPT is not None and QUALITY_REVIEWER_PROMPT is not None
+    assert callable(build_resume_system_prompt)
+    assert "accent_mint" in THEME_TOKENS and callable(apply_theme) and callable(render_footer)
+
