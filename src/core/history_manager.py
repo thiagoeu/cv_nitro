@@ -5,8 +5,18 @@ import json
 import uuid
 from typing import List, Dict, Any, Optional
 from src.core import config
+from src.core.storage.date_utils import (
+    _parse_datetime_naive,
+    _get_sort_timestamp,
+    format_display_date,
+)
+from src.core.storage.local_store import (
+    COVER_LETTER_DELIMITER,
+    _empty_application,
+    read_local_application as _read_local,
+    serialize_local_application,
+)
 
-COVER_LETTER_DELIMITER = "\n<!-- COVER_LETTER -->\n"
 GUEST_USER_ID = "guest_local"
 SUPABASE_SETTINGS = ("SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_SERVICE_ROLE_KEY")
 # Colunas da listagem: currículo, vaga e currículo base só são lidos ao abrir a candidatura
@@ -16,27 +26,33 @@ LIST_COLUMNS = "id,user_id,job_title,job_url,language,technologies,created_at,ha
 _supabase_client_instance = None
 _last_client_config = None
 
+
 def get_history_dir() -> str:
     return os.environ.get("HISTORY_DIR", "history")
+
 
 def _ensure_dir():
     d = get_history_dir()
     if not os.path.exists(d):
         os.makedirs(d)
 
+
 def missing_supabase_settings() -> List[str]:
     """Variáveis do Supabase ausentes ou com valor de exemplo; faltando qualquer uma, o app roda em modo local."""
     return [name for name in SUPABASE_SETTINGS if not getattr(config, name, None) or "your-" in getattr(config, name)]
 
+
 def is_supabase_configured() -> bool:
     """Modo nuvem exige URL, chave anon (login) e chave service role (dados)."""
     return not missing_supabase_settings()
+
 
 def supabase_url() -> str:
     url = (config.SUPABASE_URL or "").strip().rstrip("/")
     if url.endswith("/rest/v1"):
         url = url[:-len("/rest/v1")].rstrip("/")
     return url
+
 
 def get_supabase_client():
     """Cliente de dados (service role) singleton, ou None sem configuração/falha."""
@@ -63,87 +79,18 @@ def get_supabase_client():
         print(f"Aviso ao inicializar cliente Supabase: {e}")
         return None
 
+
 def owned(query, user_id: Optional[str]):
     """Único ponto de isolamento: a service role ignora o RLS, então toda query filtra o dono aqui."""
     if not user_id or user_id == GUEST_USER_ID:
         raise ValueError("Operação no banco exige um usuário autenticado.")
     return query.eq("user_id", user_id)
 
-def _parse_datetime_naive(date_val: Any) -> datetime:
-    """Converte a data para o horário local sem tzinfo (registros do Supabase vêm em UTC)."""
-    if not date_val:
-        return datetime.min
-    if isinstance(date_val, datetime):
-        dt = date_val
-    else:
-        s = str(date_val).strip()
-        try:
-            dt = datetime.fromisoformat(s)
-        except ValueError:
-            for fmt in ("%Y%m%d_%H%M%S", "%Y-%m-%d"):
-                try:
-                    return datetime.strptime(s, fmt)
-                except ValueError:
-                    pass
-            return datetime.min
-    return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
-
-def _get_sort_timestamp(date_val: Any) -> float:
-    """Converte datas em qualquer formato para timestamp numérico civil."""
-    dt = _parse_datetime_naive(date_val)
-    if dt == datetime.min:
-        return 0.0
-    return dt.timestamp()
-
-def format_display_date(date_val: Any) -> str:
-    """Formata data para exibição amigável no formato DD/MM/YYYY HH:MM."""
-    try:
-        dt = _parse_datetime_naive(date_val)
-        if dt != datetime.min:
-            return dt.strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        pass
-    return str(date_val)[:16].replace("T", " ")
-
-def _empty_application() -> Dict[str, Any]:
-    return {"resume_md": "", "cover_letter_md": "", "metadata": {}}
-
-def _read_local(filepath: str) -> Dict[str, Any]:
-    """Lê um arquivo do histórico local (cabeçalho JSON + currículo + carta), sem checar o dono."""
-    if not filepath or not os.path.exists(filepath):
-        return _empty_application()
-
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    metadata = {}
-    body = content
-    if content.startswith("<!--"):
-        end_idx = content.find("-->")
-        if end_idx != -1:
-            try:
-                metadata = json.loads(content[4:end_idx].strip())
-            except Exception:
-                pass
-            body = content[end_idx + 3:].strip()
-
-    metadata.setdefault("diagnostic", {})
-    resume_part = body
-    cover_letter_part = ""
-    if COVER_LETTER_DELIMITER.strip() in body:
-        parts = body.split(COVER_LETTER_DELIMITER.strip())
-        resume_part = parts[0].strip()
-        cover_letter_part = parts[1].strip() if len(parts) > 1 else ""
-
-    return {
-        "resume_md": resume_part,
-        "cover_letter_md": cover_letter_part,
-        "metadata": metadata
-    }
 
 def _local_files() -> List[str]:
     _ensure_dir()
     return glob.glob(os.path.join(get_history_dir(), "*.md"))
+
 
 def _local_copy_of(supabase_id: str) -> Optional[str]:
     """Caminho da cópia local de uma candidatura da nuvem, se existir."""
@@ -154,6 +101,7 @@ def _local_copy_of(supabase_id: str) -> Optional[str]:
         except Exception:
             pass
     return None
+
 
 def save_resume(
     job_title: str,
@@ -245,14 +193,13 @@ def save_resume(
     if supabase_id:
         metadata["supabase_id"] = supabase_id
 
-    file_content = f"<!--\n{json.dumps(metadata, ensure_ascii=False)}\n-->\n\n{content.strip()}"
-    if cover_letter and cover_letter.strip():
-        file_content += f"{COVER_LETTER_DELIMITER}{cover_letter.strip()}"
+    file_content = serialize_local_application(metadata, content, cover_letter)
 
     with open(local_filepath, "w", encoding="utf-8") as f:
         f.write(file_content)
 
     return f"supabase:{supabase_id}" if cloud_ok else local_filepath
+
 
 def _row_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
     row_id = str(row.get("id"))
@@ -269,6 +216,7 @@ def _row_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
         "supabase_id": row_id,
         "user_id": str(row.get("user_id")) if row.get("user_id") else None
     }
+
 
 def list_resumes(user_id: str) -> List[Dict[str, Any]]:
     """
@@ -313,6 +261,7 @@ def list_resumes(user_id: str) -> List[Dict[str, Any]]:
     resumes.sort(key=lambda x: _get_sort_timestamp(x.get("date")), reverse=True)
     return resumes
 
+
 def load_application(filepath: str, user_id: str) -> Dict[str, Any]:
     """
     Carrega a candidatura completa (currículo, carta e metadados) do user_id.
@@ -353,6 +302,7 @@ def load_application(filepath: str, user_id: str) -> Dict[str, Any]:
         return _empty_application()
     return data
 
+
 def delete_application(filepath: str, user_id: str) -> bool:
     """Exclui uma candidatura do user_id na nuvem e suas cópias locais."""
     deleted = False
@@ -383,6 +333,7 @@ def delete_application(filepath: str, user_id: str) -> bool:
             print(f"Erro ao remover arquivo local {path}: {e}")
 
     return deleted
+
 
 def sync_local_to_supabase(user_id: str) -> int:
     """Envia à nuvem as candidaturas locais do user_id que ainda não têm registro no Supabase."""

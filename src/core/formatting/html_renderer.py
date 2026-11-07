@@ -1,0 +1,186 @@
+"""Conversor de currículo Markdown para HTML A4 estilizado com sanitização contra XSS."""
+import re
+import html
+from typing import Optional
+from src.core.formatting.styles import build_a4_html_document
+
+
+def in_experience_or_projects(body: list) -> bool:
+    for item in reversed(body):
+        if "section-title" in item:
+            return True
+    return False
+
+
+def _inline_format(text: str) -> str:
+    # 1. Escapa tags HTML perigosas para prevenir XSS
+    safe_text = html.escape(text, quote=True)
+
+    # 2. Transforma links Markdown [texto](url) permitindo apenas esquemas seguros (http/https)
+    def replace_link(match):
+        label = match.group(1)
+        url = match.group(2)
+        if url.startswith("http://") or url.startswith("https://"):
+            return f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{label}</a>"
+        return label
+
+    safe_text = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", replace_link, safe_text)
+    # Remove qualquer link markdown com esquema perigoso (ex: javascript:)
+    safe_text = re.sub(r"\[(.+?)\]\((?:javascript|data|vbscript):[^\s)]*\)", r"\1", safe_text, flags=re.IGNORECASE)
+
+    # 3. Transforma URLs soltas seguras (sem reescrever links já transformados em <a>)
+    def replace_bare_url(match):
+        url = match.group(1)
+        return f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{url}</a>"
+
+    safe_text = re.sub(r"(?<!href=')(https?://[^\s<]+)", replace_bare_url, safe_text)
+
+    # 4. Transforma formatações em negrito e itálico
+    safe_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe_text)
+    safe_text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", safe_text)
+    return safe_text
+
+
+def _format_contact_item(c: str) -> str:
+    c = c.strip()
+    # Verifica se o item é um link markdown [texto](url)
+    m = re.match(r"^\[(.+?)\]\((.+?)\)$", c)
+    if m:
+        label = html.escape(m.group(1))
+        url = m.group(2).strip()
+        if url.startswith("http://") or url.startswith("https://"):
+            safe_url = html.escape(url, quote=True)
+            return f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{label}</a>"
+        return label
+
+    safe_text = html.escape(c)
+    if "@" in c and not c.startswith("http"):
+        return f"<a href='mailto:{safe_text}'>{safe_text}</a>"
+    elif "linkedin.com" in c.lower() or "github.com" in c.lower():
+        url = c if (c.startswith("http://") or c.startswith("https://")) else f"https://{c}"
+        if not (url.startswith("http://") or url.startswith("https://")):
+            url = f"https://{url}"
+        safe_url = html.escape(url, quote=True)
+        return f"<a href='{safe_url}' target='_blank' rel='noopener noreferrer'>{safe_text}</a>"
+    return safe_text
+
+
+def format_resume_to_html(markdown_content: str, title: Optional[str] = None) -> str:
+    """
+    Converte o currículo em Markdown no layout canônico para um documento HTML estilizado,
+    com visual profissional em folha A4 e regras de impressão (@media print) para PDF.
+    """
+    if not markdown_content:
+        return "<html><body><p>Nenhum conteúdo para exibir.</p></body></html>"
+
+    lines = markdown_content.strip().split("\n")
+    html_body = []
+
+    table_rows = []
+    header_rows = 0  # linhas acima do separador "| --- |" são cabeçalho, em qualquer idioma
+
+    def flush_table():
+        nonlocal header_rows
+        if not table_rows:
+            return
+        html_body.append("<div class='skills-table-container'><table class='skills-table'>")
+        for r_idx, row in enumerate(table_rows):
+            tag = "th" if r_idx < header_rows else "td"
+            cells = "".join(
+                f"<{tag} class='{'col-cat' if c_idx == 0 else 'col-tech'}'>{_inline_format(cell)}</{tag}>"
+                for c_idx, cell in enumerate(row)
+            )
+            html_body.append(f"<tr>{cells}</tr>")
+        html_body.append("</table></div>")
+        table_rows.clear()
+        header_rows = 0
+
+    # Extrai o título se não foi passado
+    doc_title = title or "Currículo Profissional"
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        # Linhas de tabela
+        if line.startswith("|") and line.endswith("|"):
+            # Linha divisória (| :--- | :--- |): tudo acima dela é cabeçalho
+            if re.match(r"^\|(\s*:?-+:?\s*\|)+$", line):
+                header_rows = len(table_rows)
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) >= 2:
+                table_rows.append(cells)
+            continue
+        flush_table()
+
+        if not line:
+            continue
+
+        # Header H1: Nome do Candidato
+        if line.startswith("# "):
+            name = line[2:].strip()
+            doc_title = name
+            html_body.append(f"<h1 class='candidate-name'>{html.escape(name)}</h1>")
+            continue
+
+        # Subtítulo H3: Cargo Alvo
+        if line.startswith("### ") and not in_experience_or_projects(html_body):
+            role = line[4:].strip()
+            html_body.append(f"<div class='candidate-role'>{html.escape(role)}</div>")
+            continue
+
+        # Linha de contatos (Cidade | Email | etc.): só no cabeçalho, antes da primeira seção
+        if "|" in line and not line.startswith("|") and not in_experience_or_projects(html_body):
+            contacts = [c.strip() for c in line.split("|")]
+            formatted_contacts = []
+            for c in contacts:
+                # Transforma links em <a>
+                c_formatted = _format_contact_item(c)
+                formatted_contacts.append(c_formatted)
+            html_body.append(f"<div class='contact-bar'>{' &bull; '.join(formatted_contacts)}</div>")
+            continue
+
+        # Seções principais H2
+        if line.startswith("## "):
+            sec_name = line[3:].strip()
+            html_body.append(f"<h2 class='section-title'>{html.escape(sec_name)}</h2>")
+            continue
+
+        # Subseções H3 dentro de experiência/projetos
+        if line.startswith("### "):
+            sub_title = line[4:].strip()
+            html_body.append(f"<h3 class='entry-title'>{_inline_format(sub_title)}</h3>")
+            continue
+
+        # Subtítulo em itálico (*Cargo | Período | Local*), sem confundir com "* item" ou "**negrito**"
+        if re.fullmatch(r"([*_])(?![*_\s]).+\1", line):
+            meta_info = line.strip("*_").strip()
+            html_body.append(f"<div class='entry-meta'>{html.escape(meta_info)}</div>")
+            continue
+
+        # Bullet points de impacto (- **Tópico:** ou - ● **Tópico:** ou • **Tópico:**)
+        if line.startswith("-") or line.startswith("*") or line.startswith("●") or line.startswith("•"):
+            # Remove só o marcador de lista e o ●/• opcional, preservando o "**" do negrito
+            content = re.sub(r"^(?:[-*+]\s+)?[●•]?\s*", "", line)
+            formatted_content = _inline_format(content)
+            html_body.append(f"<div class='bullet-item'><span class='bullet-point'>●</span> <div class='bullet-text'>{formatted_content}</div></div>")
+            continue
+
+        # Parágrafos normais (ex: Resumo Profissional)
+        html_body.append(f"<p class='paragraph'>{_inline_format(line)}</p>")
+
+    flush_table()
+
+    def _row_class(item: str) -> str:
+        if any(cls in item for cls in ["candidate-name", "candidate-role", "contact-bar", "section-title", "entry-title", "entry-meta"]):
+            return "print-page-row no-break-after"
+        return "print-page-row"
+
+    # Cada bloco vira uma linha da tabela de paginação: o navegador quebra a página
+    # entre linhas e repete o <thead> (espaçador de topo) em TODAS as páginas.
+    body_content = "\n".join(
+        f"            <tr class='{_row_class(item)}'><td class='print-page-body'>{item}</td></tr>" for item in html_body
+    )
+
+    return build_a4_html_document(doc_title, body_content)
+
