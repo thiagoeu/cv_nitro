@@ -2,6 +2,7 @@ import streamlit as st
 from typing import Callable, Optional
 from src.core import history_manager, profile_manager
 from src.agents.state import GraphState
+from src.agents.general_workflow import run_general_optimization
 from src.ui.navbar import clear_transient_state, set_page
 from src.ui.components import page_header, resume_input, notify_saved
 
@@ -92,6 +93,42 @@ def run_pipeline_with_status(graph, inputs: dict, label: str) -> dict:
             raise
         status.update(label="Otimização concluída com sucesso!", state="complete", expanded=False)
     return final_state
+
+
+def run_general_with_status(
+    base_resume: str,
+    github_username: str,
+    target_title: str,
+    language: str,
+    custom_project_urls: str,
+    profile: Optional[dict] = None,
+) -> dict:
+    """Executa o endpoint independente de otimização geral com feedback visual em tempo real."""
+    with st.status("Estruturando currículo geral de alto impacto...", expanded=True) as status:
+        preview_placeholder = st.empty()
+
+        def on_step(msg: str, preview_md: Optional[str] = None):
+            st.write(msg)
+            if preview_md:
+                with preview_placeholder.container():
+                    st.caption("📄 *Prévia em tempo real do currículo geral gerado:*")
+                    st.markdown(preview_md)
+
+        try:
+            result = run_general_optimization(
+                base_resume=base_resume,
+                github_username=github_username,
+                target_title=target_title,
+                language=language,
+                custom_project_urls=custom_project_urls,
+                profile=profile,
+                on_step=on_step,
+            )
+        except Exception:
+            status.update(label="Falha na otimização geral do currículo", state="error", expanded=True)
+            raise
+        status.update(label="Currículo geral concluído com sucesso!", state="complete", expanded=False)
+    return result
 
 def save_pipeline_result(final_state: dict, job_title: str, job_url: str, job_description: str,
                          base_resume: str, github_username: str, user_id: str) -> str:
@@ -234,3 +271,82 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
         finally:
             st.session_state.wizard_is_generating = False
             st.rerun()
+
+    # MODO ALTERNATIVO INDEPENDENTE: Otimização Geral sem Vaga Específica
+    st.space("small")
+    with st.container(border=True):
+        st.markdown("#### :material/auto_fix_high: Otimização Geral de Currículo (Sem Vaga Específica)")
+        st.caption(
+            "Quer apenas deixar seu currículo impecável no padrão executivo A4 — citando todas as suas tecnologias "
+            "relevantes e melhores projetos — sem precisar informar uma vaga específica? Use este fluxo independente. "
+            "Depois de gerado, você também poderá editar o conteúdo e adicionar novos projetos por link."
+        )
+        col_gen_lang, col_gen_links = st.columns([1, 2])
+        with col_gen_lang:
+            lang_options = {"pt": "Português (PT-BR)", "en": "Inglês (EN)", "es": "Espanhol (ES)"}
+            general_lang = st.selectbox(
+                "Idioma do currículo geral",
+                options=list(lang_options.keys()),
+                format_func=lambda k: lang_options[k],
+                key="wizard_general_lang",
+            )
+        with col_gen_links:
+            general_proj_urls = st.text_input(
+                "Links de projetos específicos do GitHub para incluir (opcional)",
+                placeholder="Ex: https://github.com/usuario/projeto-1, https://github.com/usuario/projeto-2",
+                key="wizard_general_proj_urls",
+            )
+
+        submit_general = st.button(
+            "Gerando currículo geral..." if is_generating else "Gerar currículo geral de alto impacto (sem vaga específica)",
+            type="secondary",
+            icon=":material/hourglass_top:" if is_generating else ":material/auto_fix_high:",
+            width="stretch",
+            disabled=is_generating,
+            key="wizard_general_submit_btn",
+        )
+
+        if submit_general and not is_generating:
+            clear_transient_state()
+
+            if not base_resume or not base_resume.strip():
+                st.session_state.wizard_errors = ["O currículo base do candidato é obrigatório."]
+                st.rerun()
+                return
+
+            st.session_state.wizard_is_generating = True
+            st.warning(
+                "⏳ **Gerando currículo geral de alto impacto...** "
+                "Por favor, aguarde a finalização e **não atualize a página (F5) nem saia desta tela** para não interromper a geração.",
+                icon=":material/hourglass_top:",
+            )
+
+            effective_title = (job_title or "").strip() or "Currículo Geral Otimizado"
+            try:
+                general_state = run_general_with_status(
+                    base_resume=base_resume,
+                    github_username=github_user,
+                    target_title=effective_title,
+                    language=general_lang,
+                    custom_project_urls=general_proj_urls,
+                    profile=user_prof,
+                )
+                saved_path = save_pipeline_result(
+                    general_state,
+                    effective_title,
+                    job_url or "",
+                    job_desc or "Otimização geral de perfil e tecnologias relevantes (sem vaga específica).",
+                    base_resume,
+                    github_user,
+                    current_uid,
+                )
+                if clear_history_cache_cb:
+                    clear_history_cache_cb()
+                notify_saved(saved_path, "Currículo geral de alto impacto salvo!")
+                st.session_state.viewing_history = saved_path
+                set_page("applications", clear_transient=False)
+            except Exception as e:
+                st.session_state.wizard_errors = [f"Erro durante a otimização geral: {e}"]
+            finally:
+                st.session_state.wizard_is_generating = False
+                st.rerun()

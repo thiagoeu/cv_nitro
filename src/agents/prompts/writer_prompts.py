@@ -141,3 +141,32 @@ def build_cover_letter_prompts(
     )
     return system_prompt, user_prompt
 
+
+PROJECT_INJECTOR_PROMPT = PromptTemplate.from_template(
+    "Você é um especialista em recrutamento executivo de tecnologia e redação de currículos ATS.\n"
+    "Sua tarefa é escrever EXCLUSIVAMENTE um único item de projeto para a seção de projetos do currículo, "
+    "inteiramente em {language}, seguindo rigorosamente o padrão abaixo (sem cabeçalho '## ' de seção):\n\n"
+    "### {repo_name} — <Proposta de valor concisa do projeto>\n"
+    "*<Stack real do projeto separada por vírgulas>*\n"
+    "- **<Pilar técnico 1>:** <explicação técnica da implementação em 1ª pessoa do pretérito ('Desenvolvi...', 'Implementei...', 'Estruturei...', 'Projetei...')>\n"
+    "- **<Pilar técnico 2>:** <explicação técnica complementar em 1ª pessoa destacando arquitetura, integrações ou impacto>\n"
+    "- **{repo_label}:** {repo_url}\n\n"
+    "REGRAS OBRIGATÓRIAS:\n"
+    "1. Escreva INTEIRAMENTE em {language}.\n"
+    "2. Use SEMPRE verbos em 1ª pessoa do passado indicando autoria ('Desenvolvi...', 'Implementei...', 'Construí...'), NUNCA em 3ª pessoa ('Desenvolveu', 'Implementou').\n"
+    "3. Use bullets no formato `- **Tópico:** descrição` (sem '●', '•' ou colchetes).\n"
+    "4. A última linha DEVE ser exatamente `- **{repo_label}:** {repo_url}`.\n"
+    "5. Seja 100% fiel às tecnologias e funcionalidades reais do repositório abaixo (não invente stacks que o projeto não usa).\n"
+    "6. Retorne APENAS o bloco Markdown do projeto começando com '### ', sem comentários e sem cercas de código (```).\n\n"
+    "--- DADOS REAIS DO REPOSITÓRIO GITHUB ---\n"
+    "Nome: {repo_name}\n"
+    "URL: {repo_url}\n"
+    "Linguagem Principal: {repo_language}\n"
+    "Tópicos/Tags: {repo_topics}\n"
+    "Descrição: {repo_description}\n"
+    "Extrato do README:\n{repo_readme}\n\n"
+    "--- CONTEXTO DA VAGA ALVO (para destacar os pontos mais relevantes do projeto) ---\n"
+    "{job_context}"
+)
+
+

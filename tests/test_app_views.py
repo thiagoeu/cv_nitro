@@ -551,3 +551,159 @@ def test_application_view_reoptimization_exception_resets_flag():
         assert "Erro durante a re-otimização" in mock_error.call_args[0][0]
         assert st.session_state.reopt_is_generating is False
         assert mock_rerun.called
+
+
+def test_application_view_inject_project_by_link_success_and_lock():
+    st.session_state.clear()
+    st.session_state.user_session = {"user_id": "usr-proj-inject", "email": "dev@test.com", "is_guest": False}
+
+    sample_app = {
+        "metadata": {
+            "job_title": "Backend Engineer",
+            "job_description": "Python FastAPI",
+            "base_resume": "Base",
+            "date": "2026-10-21T10:00:00Z"
+        },
+        "resume_md": "# Thiago\n\n## PROJETOS EM DESTAQUE\n### Proj1 — Api\n*Python*\n- **Repositório:** https://github.com/thiagoeu/proj1\n",
+        "diagnostic": {}
+    }
+
+    updated_md = (
+        "# Thiago\n\n## PROJETOS EM DESTAQUE\n"
+        "### Proj1 — Api\n*Python*\n- **Repositório:** https://github.com/thiagoeu/proj1\n\n"
+        "### Proj2 — Novo\n*Python, FastAPI*\n- **Repositório:** https://github.com/thiagoeu/proj2\n"
+    )
+
+    def fake_button(label, **kwargs):
+        return kwargs.get("key") == "btn_add_proj_history/app1.md"
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("streamlit.text_input", return_value="https://github.com/thiagoeu/proj2"), \
+         patch("streamlit.text_area", return_value="Desc"), \
+         patch("src.core.profile_manager.get_user_profile", return_value={"github_pat": "ghp_123"}), \
+         patch("src.ui.application_tabs.inject_projects_from_urls", return_value=(updated_md, ["Proj2"])) as mock_inject, \
+         patch("src.core.history_manager.save_resume") as mock_save, \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.status"), \
+         patch("streamlit.empty"), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.header"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.space"), \
+         patch("streamlit.expander"), \
+         patch("streamlit.tabs", return_value=[MagicMock(), MagicMock(), MagicMock(), MagicMock()]), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.toast"), \
+         patch("streamlit.rerun") as mock_rerun:
+
+        applications_view.render_application_view(
+            filepath="history/app1.md",
+            get_cached_application_fn=MagicMock(return_value=sample_app),
+            clear_history_cache_cb=MagicMock(),
+            graph=MagicMock()
+        )
+
+        mock_inject.assert_called_once()
+        mock_save.assert_called_once()
+        assert mock_save.call_args.kwargs["job_title"] == "Backend Engineer"
+        assert "Proj2 — Novo" in mock_save.call_args.kwargs["content"]
+        assert st.session_state.get("proj_inject_is_generating") is False
+        assert mock_rerun.called
+
+    # Testa estado bloqueado (proj_inject_is_generating=True) e limpeza via clear_transient_state
+    st.session_state["proj_inject_is_generating"] = True
+    buttons_captured = {}
+
+    def capture_button(label, **kwargs):
+        k = kwargs.get("key")
+        if k:
+            buttons_captured[k] = {"label": label, "disabled": kwargs.get("disabled")}
+        return False
+
+    with patch("streamlit.button", side_effect=capture_button), \
+         patch("streamlit.text_input", return_value=""), \
+         patch("streamlit.text_area", return_value="Desc"), \
+         patch("src.core.profile_manager.get_user_profile", return_value={}), \
+         patch("streamlit.toggle", return_value=True), \
+         patch("streamlit.status"), \
+         patch("streamlit.empty"), \
+         patch("streamlit.markdown"), \
+         patch("streamlit.header"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.space"), \
+         patch("streamlit.expander"), \
+         patch("streamlit.tabs", return_value=[MagicMock(), MagicMock(), MagicMock(), MagicMock()]), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.warning") as mock_warning:
+
+        applications_view.render_application_view(
+            filepath="history/app1.md",
+            get_cached_application_fn=MagicMock(return_value=sample_app),
+            clear_history_cache_cb=MagicMock(),
+            graph=MagicMock()
+        )
+
+        add_btn = buttons_captured.get("btn_add_proj_history/app1.md")
+        assert add_btn is not None
+        assert add_btn["disabled"] is True
+        assert "Adicionando com IA..." in add_btn["label"]
+        assert any("não atualize a página (F5)" in str(c.args[0]) for c in mock_warning.call_args_list)
+
+    from src.ui.navbar import clear_transient_state
+    clear_transient_state()
+    assert st.session_state["proj_inject_is_generating"] is None
+
+
+def test_wizard_general_submit_without_job_description():
+    st.session_state.clear()
+    st.session_state.user_session = {"user_id": "usr-gen-1", "email": "dev@test.com", "is_guest": False}
+
+    mock_graph = MagicMock()
+    general_result = {
+        "job_title": "Currículo Geral Otimizado",
+        "generated_resume_md": "# Thiago\n## RESUMO PROFISSIONAL\nDev Full Stack.",
+        "generated_cover_letter_md": "",
+        "job_language": "pt",
+        "job_technologies": ["Python", "Go"],
+        "diagnostic": {"ats_score": 92},
+        "errors": [],
+        "agent_trace": [],
+        "stop_reason": "general_optimization_complete",
+    }
+
+    def fake_button(label, **kwargs):
+        return kwargs.get("key") == "wizard_general_submit_btn"
+
+    with patch("streamlit.button", side_effect=fake_button), \
+         patch("src.core.profile_manager.get_user_profile", return_value={"base_resume": "Meu CV Base", "github_username": "thiagoeu"}), \
+         patch("src.ui.wizard_view.resume_input", return_value="Meu CV Base"), \
+         patch("streamlit.text_input", return_value=""), \
+         patch("streamlit.text_area", return_value=""), \
+         patch("streamlit.selectbox", return_value="pt"), \
+         patch("streamlit.toggle", return_value=False), \
+         patch("src.ui.wizard_view.run_general_with_status", return_value=general_result) as mock_gen_run, \
+         patch("src.core.history_manager.save_resume", return_value="history/gen1.md") as mock_save, \
+         patch("streamlit.markdown"), \
+         patch("streamlit.caption"), \
+         patch("streamlit.space"), \
+         patch("streamlit.warning"), \
+         patch("streamlit.toast"), \
+         patch("streamlit.columns", side_effect=mock_columns), \
+         patch("streamlit.container"), \
+         patch("streamlit.rerun") as mock_rerun:
+
+        wizard_view.render_wizard_view(mock_graph, clear_history_cache_cb=MagicMock())
+
+        # O grafo original de vaga específica NÃO deve ser acionado
+        mock_graph.stream.assert_not_called()
+        mock_gen_run.assert_called_once()
+        mock_save.assert_called_once()
+        assert mock_save.call_args.kwargs["job_title"] == "Currículo Geral Otimizado"
+        assert st.session_state.viewing_history == "history/gen1.md"
+        assert st.session_state.current_page == "applications"
+        assert st.session_state.wizard_is_generating is False
+        assert mock_rerun.called
+
+

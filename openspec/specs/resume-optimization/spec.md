@@ -287,3 +287,42 @@ O sistema SHALL conferir a seção que o revisor por modelo indicar para refinam
 #### Scenario: Seção inexistente no currículo
 - **WHEN** o revisor indica para refinamento uma seção que não corresponde a nenhum título do currículo
 - **THEN** o sistema regenera o currículo completo com o feedback do revisor
+
+### Requirement: Incremento sob demanda de projetos em destaque via link do GitHub
+O sistema SHALL permitir que o usuário adicione incrementalmente novos projetos à seção de projetos do currículo gerado fornecendo links de repositórios do GitHub, buscando os dados do repositório e redigindo cada entrada via IA no idioma e padrão canônico do documento sem sobrescrever os projetos existentes.
+
+#### Scenario: Adição incremental de projeto por link do GitHub
+- **WHEN** o usuário informa um link válido de repositório do GitHub na seção de incremento de projetos do currículo e aciona a adição
+- **THEN** o sistema coleta os metadados e o README do repositório, gera a descrição formatada no idioma e padrão do documento (título H3, stack em itálico, bullets em 1ª pessoa e link do repositório) e anexa o projeto ao final da seção de projetos mantendo os anteriores intactos
+
+#### Scenario: Adição sucessiva de múltiplos projetos e prevenção de duplicidade
+- **WHEN** o usuário envia um novo link de repositório posteriormente ou informa um link já presente na seção de projetos
+- **THEN** o sistema preserva todos os projetos existentes, adiciona apenas os novos projetos (ou atualiza o projeto de mesma URL sem duplicá-lo) e recompila a folha A4 automaticamente
+
+#### Scenario: Tratamento de link inválido ou repositório inacessível
+- **WHEN** o usuário informa uma URL que não pertence a um repositório válido do GitHub ou a consulta à API falha
+- **THEN** o sistema exibe uma mensagem de erro clara ao usuário e preserva o currículo atual sem alterações
+
+### Requirement: Otimizar currículo geral sem vaga específica por endpoint independente
+O sistema SHALL disponibilizar um botão e endpoint independentes para gerar um currículo geral de alto impacto sem exigir vaga específica, mantendo o fluxo principal inalterado. O endpoint geral MUST exigir apenas o currículo base, enriquecer opcionalmente o documento com repositórios do GitHub, destacar as tecnologias comprovadas e salvar o resultado em Candidaturas com visualização A4.
+
+#### Scenario: Geração de currículo geral apenas com currículo base
+- **WHEN** o usuário informa o currículo base (deixando título e descrição da vaga em branco) e aciona o botão de otimização geral sem vaga específica
+- **THEN** o sistema executa o endpoint dedicado de otimização geral (sem acionar o grafo de análise de vaga específica), gera o currículo estruturado no padrão A4 destacando as tecnologias relevantes do candidato, registra o título padrão (ou o foco profissional informado) e redireciona para a tela da candidatura gerada
+
+#### Scenario: Geração de currículo geral enriquecida com portfólio do GitHub
+- **WHEN** o usuário informa o currículo base e um nome de usuário do GitHub ao acionar o botão de otimização geral
+- **THEN** o sistema consulta os repositórios públicos não-fork do usuário, seleciona os principais projetos pelo mérito técnico e estrelas, extrai seus READMEs higienizados e inclui a seção de Projetos em Destaque e as tecnologias comprovadas no currículo geral gerado
+
+#### Scenario: Validação de currículo base ausente no modo geral
+- **WHEN** o usuário aciona o botão de otimização geral sem ter preenchido ou enviado o currículo base
+- **THEN** o sistema exibe erro informando que o currículo base é obrigatório e não inicia chamadas aos modelos de IA
+
+#### Scenario: Isolamento em relação ao fluxo principal de vaga específica
+- **WHEN** o usuário utiliza o botão original de otimização para vaga específica ou o novo botão de otimização geral
+- **THEN** cada botão aciona seu respectivo endpoint sem interferir nos prompts, regras ou estado do outro fluxo
+
+#### Scenario: Edição e adição de projetos escolhidos pelo usuário no currículo geral
+- **WHEN** o currículo geral sem vaga específica é gerado e aberto (ou quando o usuário informa links de projetos específicos do GitHub)
+- **THEN** o usuário dispõe do botão/aba de edição do currículo e da seção de adicionar projetos por link do GitHub para incluir ou editar quantos projetos desejar mantendo o padrão do documento A4
+

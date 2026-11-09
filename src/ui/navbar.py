@@ -11,6 +11,7 @@ TRANSIENT_KEYS = [
     "wizard_errors",
     "wizard_is_generating",
     "reopt_is_generating",
+    "proj_inject_is_generating",
     "auth_error",
     "auth_success",
     "search_error",

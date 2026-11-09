@@ -8,6 +8,7 @@ from src.ui.components import page_header, login_gate, application_card, notify_
 from src.ui.wizard_view import build_initial_state, run_pipeline_with_status, save_pipeline_result
 from src.ui.application_tabs import (
     render_a4_preview_tab,
+    render_project_link_injector_card,
     render_resume_editor_tab,
     render_cover_letter_tab,
 )
@@ -30,6 +31,7 @@ def render_application_view(
     date_str = history_manager.format_display_date(metadata.get("date", ""))
     diagnostic = metadata.get("diagnostic", {})
     is_rerun_open = st.session_state.get(f"show_rerun_{filepath}", False)
+    is_proj_panel_open = st.session_state.get(f"show_proj_panel_{filepath}", False)
 
     # Barra de ações: voltar à esquerda, ações da candidatura à direita
     with st.container(horizontal=True, vertical_alignment="center"):
@@ -40,6 +42,16 @@ def render_application_view(
             st.rerun()
         st.space("stretch")
         is_reoptimizing = bool(st.session_state.get("reopt_is_generating", False))
+        is_injecting_proj = bool(st.session_state.get("proj_inject_is_generating", False))
+        if st.button(
+            "Fechar adição de projetos" if is_proj_panel_open else "Adicionar Projeto por Link",
+            icon=":material/close:" if is_proj_panel_open else ":material/add_link:",
+            type="secondary",
+            disabled=is_reoptimizing or is_injecting_proj,
+            key=f"btn_toggle_proj_panel_{filepath}",
+        ):
+            st.session_state[f"show_proj_panel_{filepath}"] = not is_proj_panel_open
+            st.rerun()
         if st.button(
             "Fechar re-otimização" if is_rerun_open else "Re-otimizar com IA",
             icon=":material/close:" if is_rerun_open else ":material/autorenew:",
@@ -175,6 +187,17 @@ def render_application_view(
     formatted_html = format_resume_to_html(resume_md, title=f"Currículo - {job_title}")
     file_stub = job_title.replace(" ", "_")
 
+    if is_proj_panel_open:
+        render_project_link_injector_card(
+            filepath=filepath,
+            resume_md=resume_md,
+            cover_letter_md=cover_letter_md,
+            save_edit_fn=save_edit,
+            language=metadata.get("language", "pt"),
+            job_description=metadata.get("job_description", ""),
+            key_prefix="top_",
+        )
+
     with tab_diag:
         if diagnostic:
             render_ats_diagnostic_panel(diagnostic)
@@ -185,7 +208,15 @@ def render_application_view(
         render_a4_preview_tab(formatted_html, file_stub)
 
     with tab_cv:
-        render_resume_editor_tab(filepath, resume_md, cover_letter_md, file_stub, save_edit)
+        render_resume_editor_tab(
+            filepath,
+            resume_md,
+            cover_letter_md,
+            file_stub,
+            save_edit,
+            language=metadata.get("language", "pt"),
+            job_description=metadata.get("job_description", ""),
+        )
 
     with tab_letter:
         render_cover_letter_tab(

@@ -493,3 +493,172 @@ def test_relevance_ranker_diverse_pillars_and_react_native():
     selected_names = [r["name"] for r in result["github_repos"]]
     assert "react-native-decibelimetro" in selected_names
     assert "farmacia-popular" in selected_names
+
+
+def test_project_injector_parse_and_incremental_append():
+    import base64
+    from src.agents.shared.project_injector import (
+        parse_github_repo_urls,
+        append_project_to_resume_md,
+        inject_projects_from_urls,
+    )
+
+    urls = parse_github_repo_urls(
+        "https://github.com/thiagoeu/OPENJOB-API-GOLANG.git\n"
+        "https://github.com/thiagoeu/react-native-decibelimetro/ "
+        "https://github.com/thiagoeu/OPENJOB-API-GOLANG"
+    )
+    assert len(urls) == 2
+    assert urls[0] == ("thiagoeu", "OPENJOB-API-GOLANG", "https://github.com/thiagoeu/OPENJOB-API-GOLANG")
+    assert urls[1] == ("thiagoeu", "react-native-decibelimetro", "https://github.com/thiagoeu/react-native-decibelimetro")
+
+    base_cv = (
+        "# Thiago\n### Dev Full Stack\n\n"
+        "## PROJETOS EM DESTAQUE\n"
+        "### Projeto Inicial — API Core\n"
+        "*Node.js, TypeScript*\n"
+        "- **Arquitetura:** Desenvolvi API modular.\n"
+        "- **Repositório:** https://github.com/thiagoeu/projeto-inicial\n\n"
+        "## FORMAÇÃO ACADÊMICA\n"
+        "### Engenharia da Computação"
+    )
+
+    # 1ª adição incremental
+    entry_1 = (
+        "### OPENJOB-API-GOLANG — Plataforma de Vagas\n"
+        "*Go, Gin, PostgreSQL*\n"
+        "- **Back-end:** Construí API RESTful em Go.\n"
+        "- **Repositório:** https://github.com/thiagoeu/OPENJOB-API-GOLANG"
+    )
+    cv_step1 = append_project_to_resume_md(
+        base_cv,
+        entry_1,
+        "https://github.com/thiagoeu/OPENJOB-API-GOLANG",
+        language="pt",
+    )
+    assert "### Projeto Inicial — API Core" in cv_step1
+    assert "### OPENJOB-API-GOLANG — Plataforma de Vagas" in cv_step1
+    assert "## FORMAÇÃO ACADÊMICA" in cv_step1
+
+    # 2ª adição incremental (novo projeto via inject_projects_from_urls com mocks)
+    fake_repo_resp = MagicMock(status_code=200)
+    fake_repo_resp.json.return_value = {
+        "name": "react-native-decibelimetro",
+        "html_url": "https://github.com/thiagoeu/react-native-decibelimetro",
+        "language": "JavaScript",
+        "topics": ["react-native", "expo"],
+        "description": "Medidor de decibéis mobile",
+    }
+    fake_readme_resp = MagicMock(status_code=200)
+    fake_readme_resp.json.return_value = {
+        "content": base64.b64encode("App mobile feito com React Native e Expo.".encode("utf-8")).decode("utf-8")
+    }
+
+    with patch("src.agents.shared.project_injector.requests.get", side_effect=[fake_repo_resp, fake_readme_resp]), \
+         patch("src.agents.shared.llm.chat_model") as mock_llm:
+        mock_llm.return_value.invoke.return_value = MagicMock(
+            content=(
+                "### react-native-decibelimetro — Medidor Acústico Mobile\n"
+                "*React Native, Expo, JavaScript*\n"
+                "- **Mobile:** Desenvolvi aplicativo multiplataforma.\n"
+                "- **Repositório:** https://github.com/thiagoeu/react-native-decibelimetro"
+            )
+        )
+        cv_step2, added = inject_projects_from_urls(
+            cv_step1,
+            "https://github.com/thiagoeu/react-native-decibelimetro",
+            language="pt",
+            job_description="Vaga React Native",
+        )
+
+    assert added == ["react-native-decibelimetro"]
+    assert "### Projeto Inicial — API Core" in cv_step2
+    assert "### OPENJOB-API-GOLANG — Plataforma de Vagas" in cv_step2
+    assert "### react-native-decibelimetro — Medidor Acústico Mobile" in cv_step2
+
+    # 3ª chamada passando o MESMO link: atualiza sem duplicar
+    cv_step3 = append_project_to_resume_md(
+        cv_step2,
+        entry_1.replace("Construí API RESTful em Go.", "Implementei API concorrente em Go."),
+        "https://github.com/thiagoeu/OPENJOB-API-GOLANG",
+        language="pt",
+    )
+    assert cv_step3.count("https://github.com/thiagoeu/OPENJOB-API-GOLANG") == 1
+    assert "Implementei API concorrente em Go." in cv_step3
+
+
+def test_run_general_optimization_without_and_with_github_and_custom_links():
+    import base64
+    from src.agents.general_workflow import (
+        extract_highlighted_technologies,
+        run_general_optimization,
+    )
+
+    base_cv = "Engenheiro de Software Full Stack com experiência em Python, FastAPI, React, PostgreSQL e Docker."
+    repos_sample = [
+        {
+            "name": "core-api",
+            "description": "Microsserviço em Go e Redis",
+            "language": "Go",
+            "topics": ["golang", "redis"],
+            "stargazers_count": 5,
+            "html_url": "https://github.com/thiagoeu/core-api",
+            "fork": False,
+            "updated_at": "2026-10-10T00:00:00Z",
+        }
+    ]
+
+    techs = extract_highlighted_technologies(base_cv, repos_sample, {"core-api": "Usa Redis e Go."})
+    assert "Python" in techs
+    assert "FastAPI" in techs
+    assert "Go" in techs
+    assert "Redis" in techs
+
+    generated_md_sample = (
+        "# Thiago Araújo\n### Engenheiro de Software Full Stack\n\n"
+        "## RESUMO PROFISSIONAL\nDesenvolvedor Full Stack com Python, FastAPI, React, PostgreSQL, Docker, Go e Redis.\n\n"
+        "## HABILIDADES TÉCNICAS\n| Categoria | Tecnologias |\n| :--- | :--- |\n"
+        "| **Back-end** | Python, FastAPI, Go, PostgreSQL, Redis, Docker |\n"
+        "| **Front-end** | React |\n\n"
+        "## PROJETOS EM DESTAQUE\n"
+        "### core-api — Microsserviço de Alta Performance\n"
+        "*Go, Redis*\n"
+        "- **Arquitetura:** Desenvolvi microsserviço em Go.\n"
+        "- **Repositório:** https://github.com/thiagoeu/core-api\n"
+    )
+
+    with patch("src.agents.general_workflow.llm.chat_model") as mock_llm, \
+         patch("src.agents.general_workflow.requests.get") as mock_get, \
+         patch("src.agents.general_workflow.inject_projects_from_urls") as mock_inject:
+
+        mock_llm.return_value.invoke.return_value = MagicMock(
+            content=generated_md_sample,
+            usage_metadata={"total_tokens": 120},
+            response_metadata={"finish_reason": "STOP"},
+        )
+        readme_resp = MagicMock(status_code=200)
+        readme_resp.json.return_value = {
+            "content": base64.b64encode("Microsserviço com Go e Redis.".encode("utf-8")).decode("utf-8")
+        }
+        mock_get.return_value = readme_resp
+        mock_inject.return_value = (
+            generated_md_sample + "\n### custom-proj — Extra\n*Python*\n- **Repositório:** https://github.com/thiagoeu/custom-proj\n",
+            ["custom-proj"],
+        )
+
+        res = run_general_optimization(
+            base_resume=base_cv,
+            github_username="thiagoeu",
+            target_title="",
+            language="pt",
+            custom_project_urls="https://github.com/thiagoeu/custom-proj",
+            profile={"github_username": "thiagoeu", "cached_repos": repos_sample},
+        )
+
+    assert res["job_title"] == "Currículo Geral Otimizado"
+    assert "### custom-proj — Extra" in res["generated_resume_md"]
+    assert res["diagnostic"]["ats_score"] >= 85
+    assert "Python" in res["job_technologies"]
+    assert res["stop_reason"] == "general_optimization_complete"
+
+
