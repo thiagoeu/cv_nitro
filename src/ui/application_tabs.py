@@ -26,7 +26,11 @@ def render_a4_preview_tab(formatted_html: str, file_stub: str):
             mime="text/html",
             icon=":material/download:"
         )
-    st.components.v1.html(formatted_html, height=1050, scrolling=True)
+    # Fallback seguro para versões do Streamlit com suporte a st.iframe
+    if hasattr(st, "iframe"):
+        st.iframe(formatted_html, height=1050)
+    else:
+        st.components.v1.html(formatted_html, height=1050, scrolling=True)
 
 
 def render_project_link_injector_card(

@@ -324,10 +324,10 @@ def test_wizard_view_submit_disabled_and_warning_shown_when_generating():
     }
     st.session_state.wizard_is_generating = True
 
-    button_kwargs = {}
+    buttons_by_key = {}
     def fake_button(label, **kwargs):
-        button_kwargs["label"] = label
-        button_kwargs.update(kwargs)
+        key = kwargs.get("key") or label
+        buttons_by_key[key] = {"label": label, **kwargs}
         return False
 
     with patch("streamlit.button", side_effect=fake_button), \
@@ -343,8 +343,12 @@ def test_wizard_view_submit_disabled_and_warning_shown_when_generating():
 
         wizard_view.render_wizard_view(graph=MagicMock())
 
-        assert button_kwargs.get("disabled") is True
-        assert "Otimizando currículo com agentes..." in button_kwargs.get("label", "")
+        submit_btn = buttons_by_key.get("wizard_submit_btn", {})
+        general_btn = buttons_by_key.get("wizard_general_submit_btn", {})
+        assert submit_btn.get("disabled") is True
+        assert "Otimizando currículo com agentes..." in submit_btn.get("label", "")
+        assert general_btn.get("disabled") is True
+        assert "Gerando currículo geral..." in general_btn.get("label", "")
         assert mock_warning.called
         warning_msg = mock_warning.call_args[0][0]
         assert "não atualize a página (F5)" in warning_msg
