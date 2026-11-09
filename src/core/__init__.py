@@ -22,3 +22,4 @@ __all__ = [
     "resume_formatter",
     "competency_matcher",
 ]
+
