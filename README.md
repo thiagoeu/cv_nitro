@@ -32,9 +32,9 @@ Diferente de geradores convencionais baseados em prompts únicos (suscetíveis a
 - [🗺️ Mapeamento Completo de Funcionalidades do Sistema](#️-mapeamento-completo-de-funcionalidades-do-sistema)
   - [1. Autenticação Segura & Sessão Persistente](#1-autenticação-segura--sessão-persistente)
   - [2. Gestão de Perfil do Candidato](#2-gestão-de-perfil-do-candidato)
-  - [3. Assistente de Otimização (Wizard em 3 Etapas)](#3-assistente-de-otimização-wizard-em-3-etapas)
+  - [3. Assistente de Otimização (Wizard em 3 Etapas) & Modo Geral sem Vaga](#3-assistente-de-otimização-wizard-em-3-etapas--modo-geral-sem-vaga)
   - [4. Painel de Diagnóstico ATS (O "Raio-X")](#4-painel-de-diagnóstico-ats-o-raio-x)
-  - [5. Central de Candidaturas & Visualizador Multi-Abas](#5-central-de-candidaturas--visualizador-multi-abas)
+  - [5. Central de Candidaturas, Visualizador Multi-Abas & Injetor de Projetos por Link](#5-central-de-candidaturas-visualizador-multi-abas--injetor-de-projetos-por-link)
   - [6. Dashboard Executivo & Métricas de Mercado](#6-dashboard-executivo--métricas-de-mercado)
   - [7. Configurações & Diagnóstico do Sistema](#7-configurações--diagnóstico-do-sistema)
 - [☁️ Persistência de Dados & Deploy em Nuvem](#️-persistência-de-dados--deploy-em-nuvem)
@@ -50,19 +50,24 @@ Diferente de geradores convencionais baseados em prompts únicos (suscetíveis a
 ## 💡 O Problema e a Solução
 
 ### 1. O Desafio dos Sistemas ATS no Mercado Atual
-A triagem inicial de vagas de tecnologia é massivamente automatizada por plataformas ATS (*Applicant Tracking Systems*, como Gupy, Lever, Workday e Greenhouse). Candidatos altamente qualificados são descartados sumariamente por:
+
+A triagem inicial de vagas de tecnologia é massivamente automatizada por plataformas ATS (_Applicant Tracking Systems_, como Gupy, Lever, Workday e Greenhouse). Candidatos altamente qualificados são descartados sumariamente por:
+
 - **Ausência de Correspondência Textual Exata:** Falta de termos e sinônimos técnicos canônicos da vaga.
 - **Formatação Inadequada para Parsing:** Layouts complexos com múltiplas colunas, imagens ou ícones que quebram o extrator de texto dos robôs.
 - **Falta de Validação Factual:** Dificuldade em comprovar a profundidade técnica através de projetos e repositórios reais.
 - **Inconsistência de Idioma:** Vagas em inglês ou espanhol respondidas com currículos parcialmente traduzidos.
 
-### 2. A Falha dos Geradores Convencionais (*Single Prompt*)
+### 2. A Falha dos Geradores Convencionais (_Single Prompt_)
+
 Submeter o currículo e a vaga a um LLM convencional com instruções genéricas gera graves efeitos colaterais:
+
 - **Alucinação Factual:** Criação de ferramentas, anos de experiência ou cargos que o candidato nunca exerceu.
 - **Links Falsos:** Geração de URLs inexistentes de repositórios no GitHub.
 - **Desperdício de Tokens:** O modelo processa milhares de tokens de textos institucionais da vaga (políticas de RH, benefícios, interface do site) que não agregam valor ao currículo.
 
 ### 3. A Resposta do GitMatch (CV Nitro)
+
 O GitMatch implementa uma **linha de produção modular** inspirada nos princípios da Engenharia de Software e Sistemas Multi-Agentes: cada agente possui uma especialidade estrita, isolamento de contexto, validações determinísticas de custo zero em tokens e verificação cruzada de qualidade antes da entrega.
 
 ---
@@ -71,7 +76,7 @@ O GitMatch implementa uma **linha de produção modular** inspirada nos princíp
 
 ### Por que Sistemas Multi-Agentes (SMA) em vez de Prompt Único?
 
-1. **Separação de Preocupações (*Separation of Concerns*):** Analisar requisitos de vagas, filtrar repositórios na API, redigir o currículo e auditar conformidade exigem raciocínios e temperaturas distintas.
+1. **Separação de Preocupações (_Separation of Concerns_):** Analisar requisitos de vagas, filtrar repositórios na API, redigir o currículo e auditar conformidade exigem raciocínios e temperaturas distintas.
 2. **Eliminação de Alucinações via Auditoria Cruzada:** Um agente gerador não pode auditar a si mesmo com rigor. O `quality_reviewer` atua como um crítico independente.
 3. **Eficiência de Tokens e Custo:** Em vez de trafegar descrições de 3.000 palavras em todas as chamadas, o primeiro agente sintetiza a oportunidade, reduzindo os custos de inferência em até 60%.
 4. **Resiliência e Tolerância a Falhas:** Falhas em agentes secundários (como a API do GitHub ou a Cover Letter) são tratadas como não-fatais, garantindo a entrega do currículo otimizado.
@@ -91,7 +96,7 @@ flowchart TD
     RR -->|Top 3 Repositórios Autorais & READMEs Limpos| CM[3. Competency Matcher]
     CM -->|Tecnologias Comprovadas & Lacunas| RG[4. Resume Generator]
     RG -->|Currículo Formatado em Markdown ATS| QR[5. Quality Reviewer & Diagnóstico ATS]
-    
+
     QR --> Route{route_after_review}
     Route -- "Falha pontual em 1 seção & tentativas < 2" --> SP[Section Patcher]
     SP --> QR
@@ -99,30 +104,83 @@ flowchart TD
     Route -- "Aprovado / Limite atingido\n(sem Cover Letter)" --> EndFlow([Fim do Fluxo])
     Route -- "Aprovado / Limite atingido\n(com Cover Letter)" --> CL[6. Cover Letter Generator]
     CL --> EndFlow
-    
+
     EndFlow --> Storage[(Persistência: Supabase Nuvem / Local)]
 ```
+
+#### 📊 Detalhamento Arquitetural das Fases (Caminho Feliz)
+
+```mermaid
+flowchart TD
+    classDef userNode fill:#2563EB,stroke:#1D4ED8,color:#FFFFFF,stroke-width:2px;
+    classDef agentNode fill:#F8FAFC,stroke:#0284C7,color:#0F172A,stroke-width:2px;
+    classDef checkNode fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px;
+    classDef successNode fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:2px;
+
+    User(["👤 Candidato preenche dados no Wizard<br><i>(Currículo Base + Vaga Alvo + GitHub)</i>"]):::userNode
+
+    subgraph S1 ["Fase 1: Disparo Paralelo (Scatter-Gather)"]
+        JA["🎯 1. Job Analyzer<br><b>Extrai:</b> tecnologias, keywords,<br>idioma (PT/EN/ES) e resumo enxuto"]:::agentNode
+        GF["🐙 2a. GitHub Fetcher<br><b>Busca na API:</b> repositórios públicos<br>não-fork <i>(ou cache do perfil)</i>"]:::agentNode
+    end
+
+    subgraph S2 ["Fase 2: Curadoria de Portfólio & Matcher Factual"]
+        RR["⚡ 2b. Relevance Ranker (0 Tokens LLM)<br><b>Ranqueia via MMR:</b> pontuação de relevância técnica<br><b>Baixa em paralelo:</b> Top 3 READMEs higienizados"]:::agentNode
+        CM["🧭 3. Competency Matcher<br><b>Mapeamento Factual:</b><br>• Tecnologias Comprovadas (Whitelist)<br>• Lacunas Reais (Whitelist Negativa)"]:::agentNode
+    end
+
+    subgraph S3 ["Fase 3: Redação Executiva & Auditoria ATS"]
+        RG["✍️ 4. Resume Generator<br><b>Redige:</b> Padrão A4, verbos em 1ª pessoa,<br>tabela de habilidades e projetos do GitHub"]:::agentNode
+        QR{"🔍 5. Quality Reviewer<br><b>Auditoria em 2 Níveis:</b><br>• Tier 1: Determinístico (links/placeholders)<br>• Tier 2: Semântico com LLM"}:::checkNode
+    end
+
+    subgraph S4 ["Fase 4: Finalização & Persistência"]
+        CL["✉️ 6. Cover Letter Generator<br><b>Redige:</b> Carta em 4 atos conectando<br>projetos reais do portfólio à vaga"]:::agentNode
+        DONE["🎉 Candidatura Pronta!<br>• Salva no Supabase / Histórico Local<br>• Folha A4 interativa + Diagnóstico ATS"]:::successNode
+    end
+
+    User -->|Dispara Grafo| JA
+    User -->|Dispara Grafo| GF
+    JA -->|Requisitos da Vaga| RR
+    GF -->|Lista de Repositórios| RR
+    RR -->|Top 3 READMEs Limpos| CM
+    CM -->|Whitelist Factual| RG
+    RG -->|Currículo em Markdown| QR
+    QR -->|✅ Aprovado de Primeira| CL
+    CL -->|Gera Carta| DONE
+```
+
+| Fase  | Agente(s)                         | Entrada Principal              | Saída / Ação                                     |       Consumo de Tokens       |
+| :---: | :-------------------------------- | :----------------------------- | :----------------------------------------------- | :---------------------------: |
+| **1** | `job_analyzer` & `github_fetcher` | Texto da vaga + usuário GitHub | Requisitos filtrados e lista de repositórios     |     Baixo / 0 (paralelo)      |
+| **2** | `relevance_ranker`                | Vaga + repositórios brutos     | Top 3 repositórios com READMEs higienizados      | **0 tokens** (determinístico) |
+| **3** | `competency_matcher`              | Currículo base + READMEs       | Tecnologias comprovadas vs. lacunas reais        |     Otimizado / Pydantic      |
+| **4** | `resume_generator`                | Whitelist factual + portfólio  | Currículo completo no padrão A4 e idioma da vaga |   Única chamada estruturada   |
+| **5** | `quality_reviewer`                | Currículo gerado + regras      | Nota ATS, aprovação e diagnóstico auditável      |  Tier 1 (0 tokens) + Tier 2   |
+| **6** | `cover_letter_generator`          | Projetos comprovados + vaga    | Carta de apresentação personalizada em 4 atos    |    Opcional (desativável)     |
 
 ---
 
 ### Papéis, Importância e Escolhas Técnicas de Cada Agente
 
 #### 🎯 1. Job Analyzer (`job_analyzer`)
-* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py)
-* **Papel:** Analista especialista em triagem e extração de requisitos de vagas de tecnologia.
-* **Importância:** Funciona como o alicerce do fluxo. Se o idioma ou os termos forem mal identificados, todo o restante da cadeia gerará resultados distorcidos.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py)
+- **Papel:** Analista especialista em triagem e extração de requisitos de vagas de tecnologia.
+- **Importância:** Funciona como o alicerce do fluxo. Se o idioma ou os termos forem mal identificados, todo o restante da cadeia gerará resultados distorcidos.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Saída Estruturada via Pydantic ([JobAnalysis](src/agents/nodes/analysis.py)):** Garante tipagem estrita de `keywords`, `technologies`, `language` e `summary`.
   - **`job_summary` Enxuto (~150 palavras):** A vaga bruta contém textos irrelevantes (benefícios, cultura da empresa, declarações de diversidade, cabeçalhos de sites). O analisador resume os requisitos e substitui a vaga original por `job_context()`, **economizando centenas de tokens em cada nó seguinte**.
-  - **Detecção Robusta de Idioma:** Avalia o corpo dos requisitos ignorando textos fixos da interface de portais de emprego (ex.: *"Candidatar-se à vaga"*).
+  - **Detecção Robusta de Idioma:** Avalia o corpo dos requisitos ignorando textos fixos da interface de portais de emprego (ex.: _"Candidatar-se à vaga"_).
 
 ---
 
 #### 🐙 2. GitHub Fetcher + Relevance Ranker (`github_fetcher`, `relevance_ranker`)
-* **Arquivo:** [src/agents/nodes/github.py](src/agents/nodes/github.py)
-* **Papel:** Investigador de portfólio e curador de evidências técnicas reais do candidato.
-* **Importância:** Conecta o currículo a projetos reais, impedindo que o candidato liste apenas palavras-chave soltas sem embasamento prático.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/github.py](src/agents/nodes/github.py)
+- **Papel:** Investigador de portfólio e curador de evidências técnicas reais do candidato.
+- **Importância:** Conecta o currículo a projetos reais, impedindo que o candidato liste apenas palavras-chave soltas sem embasamento prático.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Execução 100% Determinística (0 Tokens de LLM):** Toda a busca, ranqueamento e higienização roda em código Python puro sem gastar nenhum token de IA.
   - **Fan-out Concorrente:** O `github_fetcher` lista os repositórios (até 100, uma requisição) em paralelo com o `job_analyzer`; o `relevance_ranker` junta os dois resultados.
   - **Cache do Perfil:** Se o usuário do GitHub da otimização for o mesmo salvo no Perfil, a lista em cache é reaproveitada e a API de listagem nem é chamada.
@@ -133,57 +191,60 @@ flowchart TD
     - `+3.5` por tópico/tag correspondente (com normalização e equivalências semânticas);
     - `+1.5` por ocorrência de tecnologias na descrição (usando regex com limites de palavra para evitar falsos positivos);
     - `+6.0` de bônus prioritário para tecnologias presentes diretamente no título do cargo (`job_title`);
-    - **Seleção Gulosa por Diversidade (*Maximal Marginal Relevance - MMR*):** Concede bônus por tecnologias inéditas ainda não cobertas pelos repositórios já escolhidos (`+3.0` por tecnologia da vaga e `+8.0` por tecnologia do título), garantindo que vagas híbridas/Full Stack (ex.: *Node.js + React Native*) tragam projetos representativos de todos os pilares (Backend, Mobile e Frontend) em vez de 3 repositórios repetidos da mesma stack.
+    - **Seleção Gulosa por Diversidade (_Maximal Marginal Relevance - MMR_):** Concede bônus por tecnologias inéditas ainda não cobertas pelos repositórios já escolhidos (`+3.0` por tecnologia da vaga e `+8.0` por tecnologia do título), garantindo que vagas híbridas/Full Stack (ex.: _Node.js + React Native_) tragam projetos representativos de todos os pilares (Backend, Mobile e Frontend) em vez de 3 repositórios repetidos da mesma stack.
   - **Higienização de README ([`_clean_readme`](src/agents/nodes/github.py)):** Remove badges markdown, tags HTML, seções triviais de licença e comandos de instalação, preservando apenas o extrato técnico da arquitetura (limitado a 1.200 caracteres).
   - **Validação de Segurança:** Regex de segurança sobre o nome de usuário do GitHub para proteção contra injeções.
 
 ---
 
 #### 🧭 3. Competency Matcher (`competency_matcher`)
-* **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py) (regras e fallback em [src/core/competency_matcher.py](src/core/competency_matcher.py))
-* **Papel:** Trava factual e auditor semântico do pipeline: separa os requisitos da vaga em **tecnologias comprovadas** e **pendências técnicas** (lacunas) antes de qualquer redação.
-* **Importância:** Impede o currículo de afirmar uma tecnologia que o candidato não possui, ao mesmo tempo em que evita falsos negativos por variações de nomenclatura. As lacunas são proibidas no currículo, verificadas pelo revisor e entregues à carta apenas como interesse em aprender.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/analysis.py](src/agents/nodes/analysis.py) (regras e fallback em [src/core/competency_matcher.py](src/core/competency_matcher.py))
+- **Papel:** Trava factual e auditor semântico do pipeline: separa os requisitos da vaga em **tecnologias comprovadas** e **pendências técnicas** (lacunas) antes de qualquer redação.
+- **Importância:** Impede o currículo de afirmar uma tecnologia que o candidato não possui, ao mesmo tempo em que evita falsos negativos por variações de nomenclatura. As lacunas são proibidas no currículo, verificadas pelo revisor e entregues à carta apenas como interesse em aprender.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Arquitetura Híbrida (Agente Semântico LLM + Motor Determinístico):**
-    - **Modo Estrito (`strict_review=True`):** Aciona um **Agente Semântico Fundamentado (*Grounded Semantic Matcher*)** com saída estruturada Pydantic ([`CompetencyAudit`](src/agents/nodes/analysis.py)), capaz de correlacionar ferramentas, frameworks e ecossistemas reais do perfil (ex.: `Expo` comprova `React Native`; `NestJS`/`Express` comprovam `Node.js`; `Prisma`/`TypeORM` comprovam `SQL`), mantendo trava factual estrita para jamais inventar tecnologias ausentes (ex.: `Java` sem evidência vai obrigatoriamente para `unmatched_gaps`).
+    - **Modo Estrito (`strict_review=True`):** Aciona um **Agente Semântico Fundamentado (_Grounded Semantic Matcher_)** com saída estruturada Pydantic ([`CompetencyAudit`](src/agents/nodes/analysis.py)), capaz de correlacionar ferramentas, frameworks e ecossistemas reais do perfil (ex.: `Expo` comprova `React Native`; `NestJS`/`Express` comprovam `Node.js`; `Prisma`/`TypeORM` comprovam `SQL`), mantendo trava factual estrita para jamais inventar tecnologias ausentes (ex.: `Java` sem evidência vai obrigatoriamente para `unmatched_gaps`).
     - **Modo Econômico (`strict_review=False`) e Fallback Resiliente:** Executa o classificador determinístico canônico (0 tokens de LLM), garantindo disponibilidade contínua mesmo sem cota de API.
   - **Base de Evidências Única:** Currículo base + nome, tópicos, descrição e linguagem dos repositórios + extratos dos READMEs. É a mesma base de evidências fornecida ao gerador.
   - **Equivalências Direcionais Canônicas ([`competency_matcher.py`](src/core/competency_matcher.py)):**
-    - *Sinônimos (`ALIASES`):* Valem nos dois sentidos (`Postgres` = `PostgreSQL`, `React Native` = `react-native`, `Next.js` = `nextjs`, `RESTful` = `APIs REST`).
-    - *Famílias (`FAMILIES`):* Valem só do específico para o genérico (`Expo` comprova `React Native`; `MySQL` comprova `SQL`, mas **não** comprova `PostgreSQL`; `pytest` comprova "testes automatizados", mas não `Jest`).
+    - _Sinônimos (`ALIASES`):_ Valem nos dois sentidos (`Postgres` = `PostgreSQL`, `React Native` = `react-native`, `Next.js` = `nextjs`, `RESTful` = `APIs REST`).
+    - _Famílias (`FAMILIES`):_ Valem só do específico para o genérico (`Expo` comprova `React Native`; `MySQL` comprova `SQL`, mas **não** comprova `PostgreSQL`; `pytest` comprova "testes automatizados", mas não `Jest`).
   - **Termos Curtos e Ambíguos:** `C`, `R`, `Go`, `REST`, `TS` e `ML` exigem a grafia técnica e não casam com `C#`, `C++`, `R&D`, `go-live` ou "the rest of".
 
 ---
 
 #### 📄 4. Resume Generator (`resume_generator`)
-* **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py), junto com o `section_patcher` e o `cover_letter_generator`
-* **Papel:** Redator executivo especializado em formatação de alta fidelidade e triagem ATS.
-* **Importância:** Consolida o currículo base, a síntese da vaga e os projetos do GitHub em um documento elegante, legível por robôs e humanos.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py), junto com o `section_patcher` e o `cover_letter_generator`
+- **Papel:** Redator executivo especializado em formatação de alta fidelidade e triagem ATS.
+- **Importância:** Consolida o currículo base, a síntese da vaga e os projetos do GitHub em um documento elegante, legível por robôs e humanos.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Internacionalização Estrita com Dicionário Canônico ([LABELS](src/agents/shared/sections.py)):** Mapeia títulos de seção, categorias da tabela, níveis de idioma e cabeçalhos em `pt`, `en` e `es`. Se a vaga for em inglês, todo o currículo base é traduzido integralmente para inglês, mantendo no original apenas nomes próprios e tecnologias.
   - **Estrutura ATS Padronizada:**
     - Seção de habilidades técnicas em **Tabela Markdown de 2 colunas** com separador `| :--- | :--- |` (o formato mais legível por parsers ATS).
     - Bullets de experiência no padrão `- **Tópico de Impacto:** verbo forte + escopo + resultado mensurável`.
     - Seção de projetos enriquecida com as URLs reais e arquiteturas do GitHub.
-  - **Chamada Única com Portfólio no Prompt:** Os extratos higienizados dos READMEs dos 3 repositórios selecionados (~900 tokens) vão direto no prompt. Uma rodada de *tool-calling* reenviaria o prompt inteiro numa segunda chamada, custando mais tokens e latência do que os READMEs que evitaria.
+  - **Chamada Única com Portfólio no Prompt:** Os extratos higienizados dos READMEs dos 3 repositórios selecionados (~900 tokens) vão direto no prompt. Uma rodada de _tool-calling_ reenviaria o prompt inteiro numa segunda chamada, custando mais tokens e latência do que os READMEs que evitaria.
   - **Guarda Anti-Alucinação:** Recebe do Competency Matcher a lista de tecnologias permitidas e a de lacunas proibidas; é proibido inventar cargos, empresas ou repositórios não fornecidos.
   - **Loop de Refinamento:** Recebe diretamente o parecer do revisor (`reviewer_feedback`) para correções pontuais quando vindo de uma reprovação.
 
 ---
 
 #### 🔍 5. Quality Reviewer & Diagnóstico ATS (`quality_reviewer`)
-* **Arquivo:** [src/agents/nodes/reviewer.py](src/agents/nodes/reviewer.py)
-* **Papel:** Auditor rigoroso de conformidade estrutural, fidelidade factual e compatibilidade ATS.
-* **Importância:** Garante que o documento final não contenha erros graves antes de ser entregue ao usuário, atribuindo um score auditável.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/reviewer.py](src/agents/nodes/reviewer.py)
+- **Papel:** Auditor rigoroso de conformidade estrutural, fidelidade factual e compatibilidade ATS.
+- **Importância:** Garante que o documento final não contenha erros graves antes de ser entregue ao usuário, atribuindo um score auditável.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Arquitetura Híbrida em Dois Níveis (Two-Tier Audit):**
     1. **Tier 1 (Determinístico - Custo Zero de IA):**
-       - *Placeholders Residuais:* Detecta tags não preenchidas como `<Nome>`, `<Empresa>` (excetuando e-mails válidos).
-       - *Integridade de URLs do GitHub:* Cruza todas as URLs do GitHub citadas no currículo gerado contra os repositórios reais obtidos pela API. **Se a IA inventar uma URL de repositório, o Tier 1 reprova imediatamente**.
-       - *Validação de Tabela:* Checa a presença da tabela de habilidades.
-       - *Score ATS Matemático:* Calcula a cobertura real de tecnologias (50%), keywords (25%) e estrutura (25%) numa escala linear de 0 a 100, sem piso artificial.
-       - *Refinamento Localizado:* Problemas críticos (URL de repositório inventada, marcador `<...>` não preenchido, pendência técnica atribuída ao candidato) apontam a seção onde o defeito está, pelo título no idioma da vaga (ex.: `KEY PROJECTS`, `RESUMO PROFISSIONAL`), que o `section_patcher` reescreve sem refazer o currículo. Defeito fora de qualquer seção (ex.: título do cargo) leva à regeneração completa no modo estrito.
-       - *Currículo vazio ou truncado:* texto vazio ou saída cortada pelo limite de tokens do modelo também contam como defeito crítico.
+       - _Placeholders Residuais:_ Detecta tags não preenchidas como `<Nome>`, `<Empresa>` (excetuando e-mails válidos).
+       - _Integridade de URLs do GitHub:_ Cruza todas as URLs do GitHub citadas no currículo gerado contra os repositórios reais obtidos pela API. **Se a IA inventar uma URL de repositório, o Tier 1 reprova imediatamente**.
+       - _Validação de Tabela:_ Checa a presença da tabela de habilidades.
+       - _Score ATS Matemático:_ Calcula a cobertura real de tecnologias (50%), keywords (25%) e estrutura (25%) numa escala linear de 0 a 100, sem piso artificial.
+       - _Refinamento Localizado:_ Problemas críticos (URL de repositório inventada, marcador `<...>` não preenchido, pendência técnica atribuída ao candidato) apontam a seção onde o defeito está, pelo título no idioma da vaga (ex.: `KEY PROJECTS`, `RESUMO PROFISSIONAL`), que o `section_patcher` reescreve sem refazer o currículo. Defeito fora de qualquer seção (ex.: título do cargo) leva à regeneração completa no modo estrito.
+       - _Currículo vazio ou truncado:_ texto vazio ou saída cortada pelo limite de tokens do modelo também contam como defeito crítico.
     2. **Tier 2 (Auditoria Semântica com LLM):**
        - Só é acionado se passar no Tier 1 e se o usuário tiver optado pelo modo estrito (`strict_review=True`).
        - Recebe a vaga, as tecnologias comprovadas e as pendências técnicas, e avalia pureza do idioma e alucinações contextuais com saída Pydantic (`ReviewResult`).
@@ -196,15 +257,16 @@ flowchart TD
 ---
 
 #### ✉️ 6. Cover Letter Generator (`cover_letter_generator`)
-* **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py)
-* **Papel:** Especialista sênior em redação de cartas de apresentação persuasivas para tecnologia.
-* **Importância:** Gera uma narrativa complementar de alto valor que conecta os projetos do candidato às dores reais da empresa contratante.
-* **Principais Escolhas Técnicas & Motivações:**
+
+- **Arquivo:** [src/agents/nodes/writer.py](src/agents/nodes/writer.py)
+- **Papel:** Especialista sênior em redação de cartas de apresentação persuasivas para tecnologia.
+- **Importância:** Gera uma narrativa complementar de alto valor que conecta os projetos do candidato às dores reais da empresa contratante.
+- **Principais Escolhas Técnicas & Motivações:**
   - **Estrutura Clássica em 4 Atos:**
-    1. *Abertura Formal:* Entusiasmo e identificação imediata da posição.
-    2. *Conexão Técnica:* Conexão entre as dores da vaga e os projetos reais do GitHub do candidato.
-    3. *Fit Cultural & Proposta de Valor:* Alinhamento com a missão da empresa.
-    4. *Fechamento Cordial:* Solicitação formal de entrevista técnica.
+    1. _Abertura Formal:_ Entusiasmo e identificação imediata da posição.
+    2. _Conexão Técnica:_ Conexão entre as dores da vaga e os projetos reais do GitHub do candidato.
+    3. _Fit Cultural & Proposta de Valor:_ Alinhamento com a missão da empresa.
+    4. _Fechamento Cordial:_ Solicitação formal de entrevista técnica.
   - **Ciente das Lacunas:** Recebe as tecnologias comprovadas e as pendências técnicas; uma lacuna só pode aparecer como disposição para aprender, nunca como experiência. Marcadores `<...>` não preenchidos na carta geram aviso na candidatura.
   - **Execução Opcional e Desacoplada:** O usuário pode desativar a carta no assistente (`generate_cover_letter=False`), economizando tempo e 40% dos tokens totais da pipeline.
   - **Isolamento de Falhas:** Caso a geração da carta falhe, o currículo principal permanece salvo e utilizável.
@@ -225,7 +287,7 @@ A função de roteamento [route_after_review](src/agents/graph.py) implementa um
    - Se a versão final ainda tiver defeito crítico, ela é salva sem aprovação (`stop_reason = 'critical_issues_remaining'`) e com aviso.
    - Se o usuário desmarcou a carta (`generate_cover_letter=False`), o fluxo segue diretamente para `END`.
    - Se a carta estiver ativa, segue para `cover_letter_generator` e em seguida finaliza em `END`.
-4. **Mecanismo *Circuit Breaker*:** Garante que o grafo nunca entre em loops infinitos de regeneração, limitando estritamente a 2 rodadas.
+4. **Mecanismo _Circuit Breaker_:** Garante que o grafo nunca entre em loops infinitos de regeneração, limitando estritamente a 2 rodadas.
 5. **Observabilidade e Telemetria (`agent_trace`):** Cada nó e decisão de roteamento emite um evento no estado compartilhado, exibido interativamente no painel de diagnóstico como uma linha do tempo completa da deliberação dos agentes.
 
 ---
@@ -239,7 +301,7 @@ Para mitigar os frequentes erros de limite de requisições por minuto (`HTTP 42
   - **Nível 2 (Fallback Google):** Modelo secundário (`GEMINI_FALLBACK_MODEL`, ex.: `gemini-3.6-flash`).
   - **Nível 3 (Fallback Groq):** Caso o `GROQ_API_KEY` esteja presente no `.env`, a requisição é automaticamente repassada para o provedor Groq (`ChatGroq`, com modelos de ultra-baixa latência como `openai/gpt-oss-120b`).
 - **Tempo Máximo por Chamada:** Cada tentativa tem limite de 120 s e 1 retry por modelo antes de passar ao próximo; se todos falharem, a otimização termina com erro visível e nada é salvo.
-- **Níveis de Raciocínio (*Thinking Levels*):** Chamadas curtas usam `thinking_level="low"` para reduzir latência; a reescrita do currículo usa `thinking_level=None` para máxima qualidade textual.
+- **Níveis de Raciocínio (_Thinking Levels_):** Chamadas curtas usam `thinking_level="low"` para reduzir latência; a reescrita do currículo usa `thinking_level=None` para máxima qualidade textual.
 
 ---
 
@@ -248,43 +310,58 @@ Para mitigar os frequentes erros de limite de requisições por minuto (`HTTP 42
 A aplicação cobre integralmente o ciclo de vida da otimização de currículos, dividida nos seguintes módulos:
 
 ### 1. Autenticação Segura & Sessão Persistente
+
 - **Login e Cadastro com Supabase Auth:** Suporte a criação de contas com e-mail e senha com validações completas.
 - **Modo Local de Desenvolvimento:** Sem Supabase configurado, qualquer e-mail entra sem verificação de senha (aviso visível nas telas de login/cadastro); cada e-mail recebe um `user_id` próprio, com histórico e perfil isolados. Use apenas localmente.
-- **Sessão Persistente contra F5:** Um cookie assinado por HMAC (`AUTH_SECRET_KEY`), com expiração de 30 dias e sem tokens do provedor, mantém a sessão ao recarregar a página. Após *Sair*, a sessão só volta com um novo login.
+- **Sessão Persistente contra F5:** Um cookie assinado por HMAC (`AUTH_SECRET_KEY`), com expiração de 30 dias e sem tokens do provedor, mantém a sessão ao recarregar a página. Após _Sair_, a sessão só volta com um novo login.
 
 ### 2. Gestão de Perfil do Candidato
+
 - **Armazenamento Permanente de Dados:** Salve seu currículo base, nome completo e usuário do GitHub uma única vez no painel **Perfil**.
 - **Auto-preenchimento no Assistente:** Ao iniciar uma nova otimização, o assistente carrega automaticamente os dados do seu perfil, agilizando o fluxo.
 
-### 3. Assistente de Otimização (Wizard em 3 Etapas)
-- **Etapa 1 (Currículo Base):** Upload múltiplo (`.pdf`, `.docx`, `.md`, `.txt`) com parser e editor de texto acoplado para ajustes finos.
-- **Etapa 2 (Vaga Alvo):** Título do cargo, link da oportunidade, usuário do GitHub e campo de texto para a descrição.
-- **Etapa 3 (Preferências de IA & Tokens):**
-  - Toggle *Gerar Carta de Apresentação* (liga/desliga).
-  - Toggle *Auditoria Rígida de Qualidade* (liga auditoria semântica ou ativa modo econômico ultra-rápido).
-- **Monitor Visual & Proteção de Execução:** Barra de progresso em tempo real com status formatado de cada agente, **bloqueio automático do botão de disparo** (`disabled=True`) para impedir chamadas concorrentes/duplicadas e **alerta visual de retenção** orientando o usuário a não recarregar a página (`F5`) durante o processamento.
+### 3. Assistente de Otimização (Wizard em 3 Etapas) & Modo Geral sem Vaga
+
+- **Fluxo com Vaga Específica (Linha Multi-Agente):**
+  - **Etapa 1 (Currículo Base):** Upload múltiplo (`.pdf`, `.docx`, `.md`, `.txt`) com parser e editor de texto acoplado para ajustes finos.
+  - **Etapa 2 (Vaga Alvo):** Título do cargo, link da oportunidade, usuário do GitHub e campo de texto para a descrição.
+  - **Etapa 3 (Preferências de IA & Tokens):**
+    - Toggle _Gerar Carta de Apresentação_ (liga/desliga).
+    - Toggle _Auditoria Rígida de Qualidade_ (liga auditoria semântica ou ativa modo econômico ultra-rápido).
+- **Modo Independente de Otimização Geral de Currículo (Sem Vaga Específica):**
+  - Permite gerar um currículo geral de alto impacto no padrão executivo A4 **sem necessidade de informar vaga**.
+  - Exige apenas o currículo base, com seleção opcional de idioma (`pt`, `en`, `es`), captura dos melhores repositórios do GitHub do candidato e campo opcional para forçar links específicos de projetos.
+  - Disparado pelo botão dedicado **"Gerar currículo geral de alto impacto (sem vaga específica)"** via endpoint isolado (`src/agents/general_workflow.py`), preservando o grafo principal de vagas 100% intocado.
+- **Monitor Visual & Proteção de Execução:** Barra de progresso em tempo real com status formatado de cada etapa, **bloqueio automático de todos os botões de disparo** (`disabled=True`) para impedir chamadas concorrentes/duplicadas e **alerta visual de retenção** orientando o usuário a não recarregar a página (`F5`) durante o processamento.
 
 ### 4. Painel de Diagnóstico ATS (O "Raio-X")
+
 - **Score ATS Auditável:** Nota de 0 a 100 (linear) calculada com base na cobertura de tecnologias, palavras-chave e estrutura.
 - **Avisos da Execução:** Falhas não fatais (GitHub indisponível, revisor ou carta que falharam) ficam registradas no diagnóstico e aparecem sempre que a candidatura é reaberta.
 - **Mapeamento de Termos:** Visualização das tecnologias e competências que foram integradas ao texto.
 - **Parecer do Revisor:** Resumo executivo das alterações estruturais aplicadas.
 
-### 5. Central de Candidaturas & Visualizador Multi-Abas
+### 5. Central de Candidaturas, Visualizador Multi-Abas & Injetor de Projetos por Link
+
 - **Busca e Filtros Instantâneos:** Localize candidaturas por cargo, empresa ou tecnologias.
 - **Visualizador em 4 Abas:**
-  - 🎯 **Diagnóstico ATS:** Relatório detalhado de qualidade.
-  - 📑 **Folha Formatada (A4):** Diagramação profissional em CSS pronta para impressão ou exportação para PDF (`Ctrl + P`).
-  - 📄 **Markdown Puro:** Código pronto para copiar ou usar em plataformas digitais.
-  - ✉️ **Carta de Apresentação:** Texto persuasivo estruturado para envio ao recrutador.
+  - 🎯 **Diagnóstico ATS:** Relatório detalhado de qualidade e aderência de termos.
+  - 📑 **Folha Formatada (A4):** Diagramação profissional em CSS/HTML renderizada nativamente via `st.iframe` para máxima compatibilidade, pronta para impressão ou exportação para PDF (`Ctrl + P`).
+  - 📝 **Editor de Conteúdo do Currículo:** Edição estruturada (campos protegidos com layout travado) ou edição em Markdown completo com recompilação instantânea da folha A4.
+  - ✉️ **Carta de Apresentação:** Texto persuasivo estruturado para envio ao recrutador com suporte a edição e download.
+- **🔗 Incrementar Projetos em Destaque por Link (GitHub + IA):**
+  - Seção integrada na tela da candidatura e botão de acesso rápido no topo (**"Adicionar Projeto por Link"**).
+  - Permite colar uma ou mais URLs de repositórios do GitHub (`https://github.com/user/repo`). A IA consulta os dados e o README do repositório, redige a entrada no padrão canônico do documento (H3, stack em itálico, bullets em 1ª pessoa) e anexa ao final da seção de projetos sem sobrescrever os existentes e evitando links duplicados.
 - **Re-otimizador Inteligente com Trava de Execução:** Ajuste a descrição da vaga ou o currículo e dispare uma nova rodada sem recomeçar do zero, contando com desativação automática dos botões de disparo/fechamento, alerta contra `F5` e recuperação resiliente via bloco `try ... finally`.
 
 ### 6. Dashboard Executivo & Métricas de Mercado
+
 - **Cards Analíticos:** Total de candidaturas, Score ATS médio, proporção de idiomas (PT/EN/ES) e volume de stacks identificadas.
 - **Gráficos Interativos:** Ranking das tecnologias mais exigidas pelas vagas cadastradas.
 - **Barra Lateral com Recentes:** Acesso rápido com um clique às últimas candidaturas salvas.
 
 ### 7. Configurações & Diagnóstico do Sistema
+
 - Verificação do status de conexão com o banco de dados (Supabase Nuvem vs. Local).
 - Validação das chaves de API (`GEMINI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`).
 - **Monitor de Cota & Capacidade de Tokens (Hoje):** Acompanhamento visual com barras de progresso (`st.progress`) da porcentagem disponível de tokens e requisições diárias para Google Gemini e Groq Fallback, estimativa de quantas otimizações completas ainda cabem no dia antes de risco de erro HTTP 429, consulta ao vivo aos limites da API do GitHub (`/rate_limit`) e teste ativo das chaves de IA. Cada chamada de modelo é contada uma única vez, no provedor que de fato respondeu (inclusive quando o Groq assume no lugar do Gemini), a partir dos metadados de uso do próprio LangChain.
@@ -303,7 +380,7 @@ Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (
 
 ### Migração do Banco (RLS e dono obrigatório)
 
-1. Abra o **SQL Editor** do painel do Supabase, cole o conteúdo de `supabase_schema.sql` e clique em *Run*. O script é idempotente.
+1. Abra o **SQL Editor** do painel do Supabase, cole o conteúdo de `supabase_schema.sql` e clique em _Run_. O script é idempotente.
 2. Confirme que a chave anon não lê nada: `curl "$SUPABASE_URL/rest/v1/applications?select=id" -H "apikey: $SUPABASE_KEY"` deve retornar `[]`.
 3. **Registros antigos sem dono** deixam de aparecer no app. Para recuperá-los:
    - no Supabase: `UPDATE public.applications SET user_id = '<uuid-do-usuario>' WHERE user_id IS NULL;`
@@ -313,16 +390,16 @@ Ambientes como o **Streamlit Community Cloud** utilizam contêineres efêmeros (
 
 ## ⚡ Estratégias de Otimização de Tokens & Latência
 
-| Estratégia | Onde Atua | Benefício Real |
-| :--- | :--- | :--- |
-| **Resumo da Vaga (`job_context`)** | `job_analyzer` | Reduz o texto da vaga em até 85%, cortando ruídos de RH de todas as etapas seguintes. |
-| **Curadoria Determinística & MMR de Portfólio** | `github_fetcher` + `relevance_ranker` | **0 tokens consumidos** para busca, filtro anti-fork, seleção diversificada MMR e higienização de READMEs. |
-| **Mapeamento Híbrido de Competências** | `competency_matcher` | Auditoria semântica via LLM no modo estrito e **0 tokens consumidos** no modo econômico/fallback determinístico. |
-| **Auditoria Determinística Tier 1** | `quality_reviewer` | **0 tokens consumidos** para checar links falsos, placeholders e calcular a cobertura ATS. |
-| **Modo Econômico de Revisão** | Toggle no Wizard | Pula a auditoria semântica do Tier 2 e do `competency_matcher`, economizando ~35% dos tokens com resposta imediata. |
-| **Toggle de Cover Letter** | Toggle no Wizard | Evita uma chamada de IA pesada caso a vaga não exija carta de apresentação (-40% de tokens). |
-| **Bloqueio de Submissão Concorrente** | `wizard_view` + `applications_view` | Desabilita botões de geração/re-otimização e alerta contra `F5`, evitando disparos duplicados e desperdício de cota. |
-| **Reserva Automática Groq** | `chat_model` (fallback) | Evita bloqueios por estouro de cota (429) do tier gratuito do Gemini. |
+| Estratégia                                      | Onde Atua                             | Benefício Real                                                                                                       |
+| :---------------------------------------------- | :------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
+| **Resumo da Vaga (`job_context`)**              | `job_analyzer`                        | Reduz o texto da vaga em até 85%, cortando ruídos de RH de todas as etapas seguintes.                                |
+| **Curadoria Determinística & MMR de Portfólio** | `github_fetcher` + `relevance_ranker` | **0 tokens consumidos** para busca, filtro anti-fork, seleção diversificada MMR e higienização de READMEs.           |
+| **Mapeamento Híbrido de Competências**          | `competency_matcher`                  | Auditoria semântica via LLM no modo estrito e **0 tokens consumidos** no modo econômico/fallback determinístico.     |
+| **Auditoria Determinística Tier 1**             | `quality_reviewer`                    | **0 tokens consumidos** para checar links falsos, placeholders e calcular a cobertura ATS.                           |
+| **Modo Econômico de Revisão**                   | Toggle no Wizard                      | Pula a auditoria semântica do Tier 2 e do `competency_matcher`, economizando ~35% dos tokens com resposta imediata.  |
+| **Toggle de Cover Letter**                      | Toggle no Wizard                      | Evita uma chamada de IA pesada caso a vaga não exija carta de apresentação (-40% de tokens).                         |
+| **Bloqueio de Submissão Concorrente**           | `wizard_view` + `applications_view`   | Desabilita botões de geração/re-otimização e alerta contra `F5`, evitando disparos duplicados e desperdício de cota. |
+| **Reserva Automática Groq**                     | `chat_model` (fallback)               | Evita bloqueios por estouro de cota (429) do tier gratuito do Gemini.                                                |
 
 ---
 
@@ -354,7 +431,8 @@ cv_nitro/
 │
 ├── src/
 │   ├── agents/
-│   │   ├── graph.py            # Definição do StateGraph, nós, arestas e roteamento cíclico
+│   │   ├── graph.py            # Definição do StateGraph, nós, arestas e roteamento cíclico (vaga específica)
+│   │   ├── general_workflow.py # Endpoint e pipeline linear de otimização geral de currículo (sem vaga)
 │   │   ├── state.py            # Definição do estado global compartilhado (GraphState)
 │   │   ├── nodes/              # Agentes (nós do grafo), enxutos e sem acoplamento cruzado
 │   │   │   ├── analysis.py     # job_analyzer (requisitos da vaga) e competency_matcher (comprovadas x lacunas)
@@ -363,13 +441,15 @@ cv_nitro/
 │   │   │   └── reviewer.py     # quality_reviewer (auditoria LLM Tier 2 e gestão de snapshots)
 │   │   ├── prompts/            # Subpacote de templates de prompts isolados da lógica de execução
 │   │   │   ├── analysis_prompts.py # JOB_ANALYZER_PROMPT e COMPETENCY_PROMPT
-│   │   │   ├── writer_prompts.py   # Prompts de currículo canônico ATS, patch de seção e carta de apresentação
+│   │   │   ├── general_prompts.py  # Prompts dedicados à redação executiva de currículo geral
+│   │   │   ├── writer_prompts.py   # Prompts de currículo canônico ATS, patch de seção e injetor de projetos
 │   │   │   └── reviewer_prompts.py # QUALITY_REVIEWER_PROMPT (auditoria semântica Tier 2)
 │   │   └── shared/             # Utilitários, clientes, contexto e validadores compartilhados pelos agentes
 │   │       ├── context.py      # Formatadores de contexto do GraphState (job_context, portfolio_context, etc.)
 │   │       ├── deterministic_validator.py # Validador determinístico Tier 1, score ATS e dicas de entrevista
 │   │       ├── github_scoring.py # Cálculo determinístico de relevância de repositórios e limpeza de READMEs
 │   │       ├── llm.py          # Cliente Gemini com reservas, invocação com registro de cota, leitura da resposta
+│   │       ├── project_injector.py # Coleta via GitHub e injeção incremental de projetos por link
 │   │       └── sections.py     # Rótulos por idioma, seções do Markdown, marcadores e troca de seção
 │   │
 │   ├── core/
@@ -460,11 +540,13 @@ pip install -r requirements.txt
 ### 3. Configurar as Variáveis de Ambiente (`.env`)
 
 Copie o modelo de configuração:
+
 ```bash
 cp .env.example .env
 ```
 
 Preencha as chaves no arquivo `.env`:
+
 ```env
 # Assinatura do cookie de sessão (Obrigatório: o app não inicia sem ela)
 # Gere com: python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -509,6 +591,7 @@ pytest
 ```
 
 Para visualizar a execução detalhada teste a teste:
+
 ```bash
 pytest -v
 ```
