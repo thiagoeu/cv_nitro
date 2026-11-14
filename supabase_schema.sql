@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     base_resume TEXT DEFAULT '',
     github_username TEXT DEFAULT '',
     cached_repos JSONB DEFAULT '[]'::JSONB,
+    github_synced_at TIMESTAMPTZ,
     skills JSONB DEFAULT '[]'::JSONB,
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -67,6 +68,7 @@ ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS full_name TEXT DEFAULT
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS base_resume TEXT DEFAULT '';
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS github_username TEXT DEFAULT '';
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS cached_repos JSONB DEFAULT '[]'::JSONB;
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS github_synced_at TIMESTAMPTZ;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '[]'::JSONB;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());

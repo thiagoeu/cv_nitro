@@ -17,9 +17,10 @@ def github_fetcher(state: dict) -> dict:
     """
     Busca repositórios públicos brutos do usuário no GitHub de forma independente.
     Executa concorrentemente com o job_analyzer na entrada do grafo.
-    Repositórios já presentes no estado (cache do perfil) são reaproveitados sem chamar a API.
+    Repositórios já presentes no estado (cache do perfil) são reaproveitados sem chamar a API,
+    a menos que 'force_github_refresh' seja verdadeiro.
     """
-    if state.get("raw_github_repos"):
+    if state.get("raw_github_repos") and not state.get("force_github_refresh"):
         cached_count = len(state["raw_github_repos"])
         return {
             "raw_github_repos": state["raw_github_repos"],
@@ -113,12 +114,13 @@ def github_fetcher(state: dict) -> dict:
                     "status": "warning"
                 }]
             }
+        refresh_note = " (atualização forçada sob demanda)" if state.get("force_github_refresh") else ""
         return {
             "raw_github_repos": repos,
             "agent_trace": [{
                 "agent": "github_fetcher",
                 "step": "Coleta de Repositórios GitHub",
-                "detail": f"Consultados {len(repos)} repositórios públicos de '{username}'.",
+                "detail": f"Consultados {len(repos)} repositórios públicos de '{username}'{refresh_note}.",
                 "status": "success"
             }]
         }
@@ -270,3 +272,48 @@ def relevance_ranker(state: dict) -> dict:
             "status": "success"
         }]
     }
+
+
+def check_github_staleness(username: str, cached_count: int) -> dict:
+    """
+    Verificação leve de defasagem (staleness) do cache comparando a quantidade
+    de repositórios públicos informada nos metadados do usuário no GitHub com a quantidade em cache.
+    Faz apenas 1 requisição leve para GET /users/{username}.
+    """
+    username = (username or "").strip()
+    if not username or not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", username):
+        return {
+            "stale": False,
+            "remote_count": None,
+            "cached_count": cached_count,
+            "difference": 0
+        }
+
+    user_url = f"https://api.github.com/users/{username}"
+    try:
+        resp = requests.get(user_url, headers=_github_headers(), timeout=GITHUB_TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            remote_count = int(data.get("public_repos", 0))
+            diff = remote_count - cached_count
+            return {
+                "stale": diff != 0,
+                "remote_count": remote_count,
+                "cached_count": cached_count,
+                "difference": diff
+            }
+        return {
+            "stale": False,
+            "remote_count": None,
+            "cached_count": cached_count,
+            "difference": 0,
+            "error": f"HTTP {resp.status_code}"
+        }
+    except Exception as e:
+        return {
+            "stale": False,
+            "remote_count": None,
+            "cached_count": cached_count,
+            "difference": 0,
+            "error": str(e)
+        }

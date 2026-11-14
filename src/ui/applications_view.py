@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import Callable
 from src.core import history_manager, profile_manager
+from src.core.storage.date_utils import format_display_date
 from src.core.resume_formatter import format_resume_to_html, parse_resume_markdown, serialize_resume_markdown
 from src.ui.diagnostic_view import render_ats_diagnostic_panel
 from src.ui.navbar import clear_transient_state, set_page
@@ -93,6 +94,33 @@ def render_application_view(
                 r_url = st.text_input("Link da vaga", value=job_url, key=f"r_url_{filepath}")
 
             r_github = st.text_input("Usuário do GitHub", value=metadata.get("github_username", ""), icon=":material/alternate_email:", key=f"r_gh_{filepath}")
+            if (r_github or "").strip():
+                target_gh = r_github.strip()
+                current_email = st.session_state.user_session.get("email", "")
+                r_prof = profile_manager.get_user_profile(current_uid, current_email)
+                same_user = target_gh.lower() == (r_prof.get("github_username") or "").strip().lower()
+                cached_repos = [r for r in (r_prof.get("cached_repos") or []) if r.get("html_url")] if same_user else []
+                synced_at = r_prof.get("github_synced_at") if same_user else None
+
+                c_gh_info, c_gh_btn = st.columns([2, 1], vertical_alignment="center")
+                with c_gh_info:
+                    if cached_repos:
+                        date_info = f" · sincronizado em {format_display_date(synced_at)}" if synced_at else ""
+                        st.caption(f":material/inventory_2: **{len(cached_repos)} projetos em cache**{date_info}")
+                    else:
+                        st.caption(":material/info: Nenhum projeto em cache para este usuário.")
+                with c_gh_btn:
+                    if st.button("Atualizar projetos", icon=":material/sync:", key=f"r_sync_gh_{filepath}", width="stretch"):
+                        with st.spinner(f"Buscando projetos públicos de @{target_gh}..."):
+                            from src.agents.nodes.github import github_fetcher
+                            gh_res = github_fetcher({"github_username": target_gh, "force_github_refresh": True})
+                        if gh_res.get("errors"):
+                            st.error(gh_res["errors"][0], icon=":material/error:")
+                        else:
+                            fetched = gh_res.get("raw_github_repos", [])
+                            profile_manager.update_cached_github_repos(current_uid, fetched)
+                            st.toast(f"{len(fetched)} projeto(s) atualizados no cache!", icon=":material/check_circle:")
+                            st.rerun()
 
             col_desc, col_base = st.columns(2)
             with col_desc:

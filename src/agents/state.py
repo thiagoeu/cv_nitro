@@ -33,6 +33,7 @@ class GraphState(TypedDict):
     # Configurações de execução modular e economia de tokens
     generate_cover_letter: bool
     strict_review: bool
+    force_github_refresh: Optional[bool]
 
     # Processado pelo Quality Reviewer / Diagnóstico ATS
     reviewer_feedback: Optional[str]

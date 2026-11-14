@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import Callable, Optional
 from src.core import history_manager, profile_manager
+from src.core.storage.date_utils import format_display_date
 from src.agents.state import GraphState
 from src.agents.general_workflow import run_general_optimization
 from src.ui.navbar import clear_transient_state, set_page
@@ -24,9 +25,10 @@ def build_initial_state(
     job_url: str,
     generate_cover_letter: bool,
     strict_review: bool,
-    profile: Optional[dict] = None
+    profile: Optional[dict] = None,
+    force_github_refresh: bool = False
 ) -> dict:
-    """Estado inicial do grafo; reaproveita os repositórios em cache do perfil quando o usuário do GitHub é o mesmo."""
+    """Estado inicial do grafo; reaproveita os repositórios em cache do perfil quando o usuário do GitHub é o mesmo, a menos que force_github_refresh seja True."""
     state = GraphState(
         job_description=job_description,
         base_resume_md=base_resume,
@@ -46,6 +48,7 @@ def build_initial_state(
         review_attempts=0,
         generate_cover_letter=generate_cover_letter,
         strict_review=strict_review,
+        force_github_refresh=force_github_refresh,
         best_resume_md=None,
         best_ats_score=None,
         best_diagnostic=None,
@@ -56,7 +59,7 @@ def build_initial_state(
     same_user = (github_username or "").strip().lower() == (profile.get("github_username") or "").strip().lower()
     # Entradas sem html_url são do formato antigo do cache (já ranqueado): ignoradas, força busca normal
     cached = [r for r in profile.get("cached_repos") or [] if r.get("html_url")]
-    if same_user and cached and github_username.strip():
+    if same_user and cached and github_username.strip() and not force_github_refresh:
         state["raw_github_repos"] = cached
     return state
 
@@ -190,6 +193,32 @@ def render_wizard_view(graph, clear_history_cache_cb: Optional[Callable] = None)
             icon=":material/alternate_email:",
             key="wizard_github_user"
         )
+        if (github_user or "").strip():
+            target_gh = github_user.strip()
+            same_user = target_gh.lower() == (user_prof.get("github_username") or "").strip().lower()
+            cached_repos = [r for r in (user_prof.get("cached_repos") or []) if r.get("html_url")] if same_user else []
+            synced_at = user_prof.get("github_synced_at") if same_user else None
+
+            c_gh_info, c_gh_btn = st.columns([2, 1], vertical_alignment="center")
+            with c_gh_info:
+                if cached_repos:
+                    date_info = f" · sincronizado em {format_display_date(synced_at)}" if synced_at else ""
+                    st.caption(f":material/inventory_2: **{len(cached_repos)} projetos em cache**{date_info}")
+                else:
+                    st.caption(":material/info: Nenhum projeto em cache para este usuário.")
+            with c_gh_btn:
+                if st.button("Atualizar projetos", icon=":material/sync:", key="wizard_sync_gh_btn", width="stretch"):
+                    with st.spinner(f"Buscando projetos públicos de @{target_gh}..."):
+                        from src.agents.nodes.github import github_fetcher
+                        gh_res = github_fetcher({"github_username": target_gh, "force_github_refresh": True})
+                    if gh_res.get("errors"):
+                        st.error(gh_res["errors"][0], icon=":material/error:")
+                    else:
+                        fetched = gh_res.get("raw_github_repos", [])
+                        profile_manager.update_cached_github_repos(current_uid, fetched)
+                        st.toast(f"{len(fetched)} projeto(s) atualizados no cache!", icon=":material/check_circle:")
+                        st.rerun()
+
         job_desc = st.text_area("Descrição completa da vaga *", height=200, placeholder="Cole aqui os requisitos e responsabilidades da vaga...", key="wizard_job_desc")
 
     # ETAPA 3

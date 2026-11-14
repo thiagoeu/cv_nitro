@@ -21,6 +21,7 @@ def get_default_profile(user_id: str, email: str = "") -> Dict[str, Any]:
         "base_resume": "",
         "github_username": "",
         "cached_repos": [],
+        "github_synced_at": "",
         "skills": [],
         "updated_at": datetime.now().astimezone().isoformat()
     }
@@ -48,6 +49,7 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
                         "base_resume": row.get("base_resume") or "",
                         "github_username": row.get("github_username") or "",
                         "cached_repos": row.get("cached_repos") or [],
+                        "github_synced_at": row.get("github_synced_at") or "",
                         "skills": row.get("skills") or [],
                         "updated_at": row.get("updated_at") or ""
                     }
@@ -69,6 +71,7 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
                     "base_resume": data.get("base_resume", ""),
                     "github_username": data.get("github_username", ""),
                     "cached_repos": data.get("cached_repos", []),
+                    "github_synced_at": data.get("github_synced_at", ""),
                     "skills": data.get("skills", []),
                     "updated_at": data.get("updated_at", "")
                 }
@@ -91,6 +94,7 @@ def get_user_profile(user_id: str, email: str = "") -> Dict[str, Any]:
                                     "base_resume": pdata.get("base_resume", ""),
                                     "github_username": pdata.get("github_username", ""),
                                     "cached_repos": pdata.get("cached_repos", []),
+                                    "github_synced_at": pdata.get("github_synced_at", ""),
                                     "skills": pdata.get("skills", []),
                                     "updated_at": pdata.get("updated_at", "")
                                 }
@@ -114,6 +118,7 @@ def save_user_profile(user_id: str, profile_data: Dict[str, Any]) -> bool:
         "base_resume": (profile_data.get("base_resume") or "").strip(),
         "github_username": (profile_data.get("github_username") or "").strip(),
         "cached_repos": profile_data.get("cached_repos") or [],
+        "github_synced_at": profile_data.get("github_synced_at") or "",
         "skills": profile_data.get("skills") or [],
         "updated_at": now_iso
     }
@@ -126,7 +131,12 @@ def save_user_profile(user_id: str, profile_data: Dict[str, Any]) -> bool:
                 # Usa upsert para criar ou atualizar em um único comando
                 client.table("user_profiles").upsert(clean_data).execute()
             except Exception as e:
-                print(f"Aviso ao salvar perfil no Supabase: {e}")
+                # Fallback caso a coluna 'github_synced_at' ainda não exista no Supabase remoto
+                try:
+                    fallback_data = {k: v for k, v in clean_data.items() if k != "github_synced_at"}
+                    client.table("user_profiles").upsert(fallback_data).execute()
+                except Exception as e2:
+                    print(f"Aviso ao salvar perfil no Supabase: {e2}")
 
     # 2. Salva localmente (cache / fallback)
     _ensure_profiles_dir()
@@ -146,9 +156,11 @@ def update_cached_github_repos(user_id: str, repos: List[Dict[str, Any]]) -> boo
     """
     Atualiza o cache de repositórios do perfil com a saída bruta do github_fetcher,
     reduzida aos campos do ranker (o Otimizador reaproveita sem chamar a API).
+    Também atualiza o timestamp 'github_synced_at'.
     """
     profile = get_user_profile(user_id)
     profile["cached_repos"] = [{field: r.get(field) for field in REPO_CACHE_FIELDS} for r in repos]
+    profile["github_synced_at"] = datetime.now().astimezone().isoformat()
     return save_user_profile(user_id, profile)
 
 def get_cached_github_repos(user_id: str) -> List[Dict[str, Any]]:
